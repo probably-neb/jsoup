@@ -1,4 +1,5 @@
-const SETTINGS_JSON: &'static str = include_str!("./settings.jsonc");
+const JSON_SETTINGS: &'static str = include_str!("./settings.jsonc");
+const JSON_KEYMAP: &'static str = include_str!("./keymap.jsonc");
 
 const JSON_SMOL: &'static str = r#"
 // 1
@@ -14,7 +15,7 @@ const JSON_SMOL: &'static str = r#"
 "#;
 
 fn main() -> Result<(), json_inc::ParseError> {
-    let tree = json_inc::parse(SETTINGS_JSON)?;
+    let tree = json_inc::parse(JSON_KEYMAP)?;
     for (index, ((kind, range), children)) in tree
         .tok_types
         .iter()

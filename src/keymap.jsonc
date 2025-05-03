@@ -1,0 +1,93 @@
+// Zed keymap
+//
+// For information on binding keys, see the Zed
+// documentation: https://zed.dev/docs/key-bindings
+//
+// To see the default key bindings run `zed: open default keymap`
+// from the command palette.
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      // "shift shift": "file_finder::Toggle"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      // "j k": ["workspace::SendKeystrokes", "escape"]
+    }
+  },
+  {
+    "context": "Editor && vim_mode == normal",
+    "bindings": {
+      "space r n": "editor::Rename"
+    }
+  },
+  {
+    "context": "Editor && edit_prediction",
+    "bindings": {
+      "tab": null,
+      "alt-j": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && edit_prediction_conflict",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-j": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-x o": "workspace::ActivateNextPane",
+      "F6": "vim::Up",
+      "ctrl-b": "vim::Down",
+      "ctrl-x": null
+    }
+  },
+  {
+    "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "bindings": {
+      // "m": "vim::MiniBrackets",
+      "b": "vim::AnyBrackets"
+    }
+  },
+  {
+    "context": "Editor && vim_mode == normal",
+    "bindings": {
+      "alt-shift-h": "vim::SwitchToHelixNormalMode"
+    }
+  },
+  {
+    "context": "ProjectSearchBar",
+    "bindings": {
+      "cmd-shift-f": "pane::DeploySearch"
+    }
+  }
+  // {
+  //   "context": "Editor",
+  //   "bindings": {
+  //     "cmd-f": "pane::CloseActiveItem"
+  //   }
+  // }
+  // {
+  //   "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+  //   "bindings": {
+  //     // Traditional Vim behavior
+  //     "q": "vim::AnyQuotes",
+  //     "b": "vim::AnyBrackets",
+  //     // mini.ai plugin behavior
+  //     "Q": "vim::MiniQuotes",
+  //     "B": "vim::MiniBrackets"
+  //   }
+  // }
+  // TODO!
+  // {
+  //   "context": "Workspace",
+  //   "bindings": {
+  //     "shift-shift": "collab::ToggleMicrophone"
+  //   }
+  // }
+]

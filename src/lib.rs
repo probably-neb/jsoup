@@ -185,48 +185,55 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
     if *cursor >= tree.contents.len() {
         return Ok(());
     }
-    if *cursor + 2 > tree.contents.len() {
-        return Ok(());
-    }
-    if tree.contents[*cursor] != b'/' {
-        return Ok(());
-    }
-    let start = *cursor;
-    match tree.contents[*cursor + 1] {
-        b'/' => {
-            assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'/']);
-            *cursor += 2;
-            while *cursor < tree.contents.len() {
-                if tree.contents[*cursor] == b'\n' {
-                    tree.comments.push(start..*cursor);
-                    return Ok(());
-                }
-
-                *cursor += 1;
-            }
+    loop {
+        if *cursor + 2 > tree.contents.len() {
             return Ok(());
         }
-        b'*' => {
-            assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'*']);
-            *cursor += 2;
-            while *cursor < tree.contents.len() {
-                if tree.contents[*cursor] == b'*' {
-                    if *cursor + 1 >= tree.contents.len() {
+        if tree.contents[*cursor] != b'/' {
+            return Ok(());
+        }
+        let start = *cursor;
+        match tree.contents[*cursor + 1] {
+            b'/' => {
+                assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'/']);
+                *cursor += 2;
+                while *cursor < tree.contents.len() {
+                    if tree.contents[*cursor] == b'\n' {
+                        tree.comments.push(start..*cursor);
                         break;
                     }
-                    if tree.contents[*cursor + 1] == b'/' {
-                        assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'*', b'/']);
-                        *cursor += 2;
-                        tree.comments.push(start..*cursor + 1);
-                        return Ok(());
-                    }
+
+                    *cursor += 1;
                 }
-                *cursor += 1;
+                parse_whitespace_maybe(tree, cursor);
             }
+            b'*' => {
+                assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'*']);
+                *cursor += 2;
+                let mut found = false;
+                while *cursor < tree.contents.len() {
+                    if tree.contents[*cursor] == b'*' {
+                        if *cursor + 1 >= tree.contents.len() {
+                            return Err(ParseError::UnexpectedEndOfInput);
+                        }
+                        if tree.contents[*cursor + 1] == b'/' {
+                            assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'*', b'/']);
+                            *cursor += 2;
+                            tree.comments.push(start..*cursor + 1);
+                            found = true;
+                            break;
+                        }
+                    }
+                    *cursor += 1;
+                }
+                if !found {
+                    return Err(ParseError::UnexpectedEndOfInput);
+                }
+                parse_whitespace_maybe(tree, cursor);
+            }
+            _ => {}
         }
-        _ => {}
     }
-    return Err(ParseError::UnexpectedEndOfInput);
 }
 
 fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
@@ -304,6 +311,7 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 tree.tok_types.push(TokenType::String);
                 tree.tok_children.push(EMPTY_RANGE);
                 tree.tok_extra.push(0);
+                let value = tree.value_at(tree.next_index() - 1);
                 return Ok(());
             }
             _ => *cursor += 1,
@@ -472,7 +480,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 
         if tree.contents[*cursor] == b',' {
             *cursor += 1;
-        } else if tree.contents[*cursor] != b']' {
+        } else if tree.contents[*cursor] != b'}' {
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
     }
