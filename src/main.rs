@@ -188,8 +188,8 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     if *cursor + 1 > tree.contents.len() {
         return Err(ParseError::UnexpectedEndOfInput);
     }
-    let start = *cursor;
     *cursor += 1;
+    let start = *cursor;
     while *cursor < tree.contents.len() {
         match tree.contents[*cursor] {
             b'\\' => {
@@ -199,7 +199,7 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 *cursor += 2;
             }
             b'"' => {
-                tree.tok_ranges.push(start..*cursor + 1);
+                tree.tok_ranges.push(start..*cursor);
                 *cursor += 1;
                 tree.tok_types.push(TokenType::String);
                 tree.tok_children.push(EMPTY_RANGE);
@@ -300,10 +300,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 
         if tree.contents[*cursor] == b',' {
             *cursor += 1;
-            let eof = skip_whitespace(tree, cursor);
-            if eof {
-                return Err(ParseError::UnexpectedEndOfInput);
-            }
         } else if tree.contents[*cursor] != b']' {
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
@@ -320,7 +316,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     let array_start = tree.tok_types.len();
     tree.tok_types.push(TokenType::Array);
     tree.tok_ranges.push(*cursor..*cursor);
-    let children_start = tree.tok_children.len();
+    let children_start = array_start + 1;
     tree.tok_children.push(children_start..children_start);
 
     loop {
