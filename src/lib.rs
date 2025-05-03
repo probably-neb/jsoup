@@ -96,7 +96,9 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         };
     }
     let eof = skip_any_ignore(&mut tree, &mut cursor)?;
-    assert!(eof);
+    if !eof {
+        return Err(ParseError::UnexpectedToken(tree.contents[cursor] as char));
+    }
     return Ok(tree);
 }
 
