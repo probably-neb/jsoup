@@ -1,6 +1,12 @@
 [package]
-name = "json-inc"
-version = "0.1.0"
+name = "json_inc"
 edition = "2024"
 
 [dependencies]
+
+[[bin]]
+name = "json-inc"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
