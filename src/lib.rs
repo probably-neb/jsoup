@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Range};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
     Array,
     Object,
@@ -151,6 +151,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     if !eof {
         return Err(ParseError::UnexpectedToken(tree.contents[cursor] as char));
     }
+    assert_tree_valid(&tree);
     return Ok(tree);
 }
 
@@ -366,17 +367,6 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     if !is_float && has_leading_0 {
         return Err(ParseError::InvalidNumber);
     }
-    {
-        let value = &tree.contents[start..*cursor];
-        fn count(bytes: &[u8], char: u8) -> usize {
-            bytes.iter().filter(|&&b| b == char).count()
-        }
-        assert!(count(value, b'.') <= 1);
-        assert!(count(value, b'e') <= 1);
-        assert!(count(value, b'E') <= 1);
-        assert!(count(value, b'-') <= 2);
-        assert!(count(value, b'+') < 1);
-    }
     tree.tok_ranges.push(start..*cursor);
     tree.tok_types.push(TokenType::Number);
     tree.tok_children.push(EMPTY_RANGE);
@@ -500,4 +490,58 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_children[array_start].end = tree.tok_types.len();
     tree.tok_ranges[array_start].end = *cursor;
     return Ok(());
+}
+
+fn assert_number_valid(tree: &JsonAst, i: usize) {
+    let range = &tree.tok_ranges[i];
+    assert!(is_start_of_number(tree.contents[range.start]));
+    assert_eq!(tree.tok_children[i], EMPTY_RANGE);
+
+    let is_negative_sign = tree.contents[range.start] == b'-';
+    let is_negative_extra = tree.tok_extra[i] & NUM_NEGATIVE != 0;
+    assert_eq!(is_negative_sign, is_negative_extra);
+
+    let value = &tree.contents[range.clone()];
+
+    fn count(bytes: &[u8], char: u8) -> u32 {
+        let mut count = 0;
+        for &byte in bytes {
+            count += (byte == char) as u32;
+        }
+        return count;
+    }
+    assert!(count(value, b'.') <= 1);
+    assert!(count(value, b'e') <= 1);
+    assert!(count(value, b'E') <= 1);
+    assert!(count(value, b'-') <= 2);
+    assert!(count(value, b'+') == 0);
+
+    let is_float_scientific = u32::max(count(value, b'e'), count(value, b'E')) != 0;
+    let is_float_frac = count(value, b'.') != 0;
+    let is_float = is_float_scientific || is_float_frac;
+    let is_float_extra = tree.tok_extra[i] & NUM_FLOAT != 0;
+    assert!(is_float_extra == is_float);
+}
+
+fn assert_string_valid(tree: &JsonAst, i: usize) {
+    let range = &tree.tok_ranges[i];
+    assert!(range.len() >= 2);
+    assert_eq!(tree.contents[range.start], b'"');
+    assert_eq!(tree.contents[range.end - 1], b'"');
+    assert_eq!(tree.tok_extra[i], 0);
+    assert_eq!(tree.tok_children[i], EMPTY_RANGE);
+    assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
+}
+
+fn assert_tree_valid(tree: &JsonAst) {
+    tree.assert_lengths();
+
+    // strings
+    for (i, &tok_type) in tree.tok_types.iter().enumerate() {
+        match tok_type {
+            TokenType::String => assert_string_valid(tree, i),
+            TokenType::Number => assert_number_valid(tree, i),
+            _ => {}
+        }
+    }
 }
