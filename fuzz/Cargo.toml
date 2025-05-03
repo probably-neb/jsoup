@@ -1,0 +1,20 @@
+[package]
+name = "json_inc-fuzz"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.json_inc]
+path = ".."
+
+[[bin]]
+name = "json-input"
+path = "fuzz_targets/json-input.rs"
+test = false
+doc = false
+bench = false
