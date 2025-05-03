@@ -3,15 +3,16 @@ use std::{fmt::Display, ops::Range};
 const SETTINGS_JSON: &'static str = include_str!("./settings.jsonc");
 
 const JSON_SMOL: &'static str = r#"
-{
-    "name": "John Doe",
+// 1
+{ // 2
+    "name": /* 3 */ "John Doe" /* 4 */,
     "age": 30,
     "pi": 3.14,
-    "pets": [
-       "dog",
-       "cat",
-    ],
-}
+    "pets": [ /* 5 */
+       "dog" /* 6**/,
+       /*7 */"cat",
+    ], //8
+} /* 9 */
 "#;
 
 fn main() -> Result<(), ParseError> {
@@ -32,6 +33,11 @@ fn main() -> Result<(), ParseError> {
             tree.value_at(index),
         );
     }
+
+    for comment in tree.comments.iter() {
+        println!("Comment: {:?}", comment);
+    }
+
     Ok(())
 }
 
@@ -51,6 +57,7 @@ struct JsonAst {
     tok_ranges: Vec<Range<usize>>,
     tok_types: Vec<TokenType>,
     tok_children: Vec<Range<usize>>,
+    comments: Vec<Range<usize>>,
 }
 
 impl JsonAst {
@@ -106,11 +113,12 @@ fn parse(input: &str) -> Result<JsonAst, ParseError> {
         tok_ranges: Vec::new(),
         tok_types: Vec::new(),
         tok_children: Vec::new(),
+        comments: Vec::new(),
     };
 
     let mut cursor = 0;
 
-    let eof = skip_whitespace(&mut tree, &mut cursor);
+    let eof = skip_any_ignore(&mut tree, &mut cursor)?;
     if !eof {
         let res = match tree.contents[cursor] {
             b'[' => parse_array(&mut tree, &mut cursor),
@@ -128,9 +136,19 @@ fn parse(input: &str) -> Result<JsonAst, ParseError> {
             return res.map(|_| tree);
         };
     }
-    let eof = skip_whitespace(&mut tree, &mut cursor);
+    let eof = skip_any_ignore(&mut tree, &mut cursor)?;
     assert!(eof);
     return Ok(tree);
+}
+
+fn skip_any_ignore(tree: &mut JsonAst, cursor: &mut usize) -> Result<bool, ParseError> {
+    let eof = skip_whitespace(tree, cursor);
+    if eof {
+        return Ok(eof);
+    }
+    skip_comment(tree, cursor)?;
+    let eof = skip_whitespace(tree, cursor);
+    Ok(eof)
 }
 
 fn skip_whitespace(tree: &mut JsonAst, cursor: &mut usize) -> bool {
@@ -138,6 +156,51 @@ fn skip_whitespace(tree: &mut JsonAst, cursor: &mut usize) -> bool {
         *cursor += 1;
     }
     return *cursor >= tree.contents.len();
+}
+
+fn skip_comment(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
+    if *cursor >= tree.contents.len() {
+        return Ok(());
+    }
+    if *cursor + 2 > tree.contents.len() {
+        return Ok(());
+    }
+    if tree.contents[*cursor] != b'/' {
+        return Ok(());
+    }
+    let start = *cursor;
+    match tree.contents[*cursor + 1] {
+        b'/' => {
+            *cursor += 2;
+            while *cursor < tree.contents.len() {
+                if tree.contents[*cursor] == b'\n' {
+                    tree.comments.push(start..*cursor);
+                    return Ok(());
+                }
+
+                *cursor += 1;
+            }
+            return Ok(());
+        }
+        b'*' => {
+            *cursor += 2;
+            while *cursor < tree.contents.len() {
+                if tree.contents[*cursor] == b'*' {
+                    if *cursor + 1 >= tree.contents.len() {
+                        break;
+                    }
+                    if tree.contents[*cursor + 1] == b'/' {
+                        *cursor += 2;
+                        tree.comments.push(start..*cursor + 1);
+                        return Ok(());
+                    }
+                }
+                *cursor += 1;
+            }
+        }
+        _ => {}
+    }
+    return Err(ParseError::UnexpectedEndOfInput);
 }
 
 fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
@@ -305,7 +368,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     *cursor += 1;
 
     loop {
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -317,7 +380,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
         parse_string(tree, cursor)?;
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -326,14 +389,14 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
         *cursor += 1;
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
 
         parse_value(tree, cursor)?;
 
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -360,7 +423,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_children.push(children_start..children_start);
 
     loop {
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -369,7 +432,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
             break;
         }
         parse_value(tree, cursor)?;
-        let eof = skip_whitespace(tree, cursor);
+        let eof = skip_any_ignore(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -381,6 +444,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     }
 
     tree.tok_children[array_start].end = tree.tok_types.len();
-    tree.tok_ranges[array_start].end = *cursor + 1;
+    tree.tok_ranges[array_start].end = *cursor;
     return Ok(());
 }
