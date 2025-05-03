@@ -14,7 +14,7 @@ const JSON_SMOL: &'static str = r#"
 "#;
 
 fn main() -> Result<(), json_inc::ParseError> {
-    let tree = json_inc::parse(JSON_SMOL)?;
+    let tree = json_inc::parse(SETTINGS_JSON)?;
     for (index, ((kind, range), children)) in tree
         .tok_types
         .iter()

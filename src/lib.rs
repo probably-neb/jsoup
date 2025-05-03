@@ -485,13 +485,20 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
     tree.assert_lengths();
     assert_eq!(tree.contents[*cursor], b'[');
-    *cursor += 1;
-    let array_start = tree.tok_types.len();
+    let array_index = tree.tok_types.len();
     tree.tok_types.push(TokenType::Array);
     tree.tok_ranges.push(*cursor..*cursor);
-    let children_start = array_start + 1;
+    let children_start = array_index + 1;
     tree.tok_children.push(children_start..children_start);
-    tree.tok_extra.push(0);
+
+    let arr_extra_index = tree.extra.len() as u32;
+    tree.tok_extra.push(arr_extra_index);
+    tree.extra.push(array_index as u32);
+
+    let mut value_extra_link_index = tree.extra.len();
+    tree.extra.push(0);
+
+    *cursor += 1;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -502,7 +509,15 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
             *cursor += 1;
             break;
         }
+        let value_index = tree.next_index();
         parse_value(tree, cursor)?;
+        let value_extra_index = tree.extra.len() as u32;
+        tree.extra.push(value_index as u32);
+
+        tree.extra[value_extra_link_index] = value_extra_index;
+        value_extra_link_index = tree.extra.len();
+        tree.extra.push(0);
+
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
@@ -514,8 +529,8 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         }
     }
 
-    tree.tok_children[array_start].end = tree.tok_types.len();
-    tree.tok_ranges[array_start].end = *cursor;
+    tree.tok_children[array_index].end = tree.tok_types.len();
+    tree.tok_ranges[array_index].end = *cursor;
     return Ok(());
 }
 
@@ -556,6 +571,7 @@ fn assert_string_valid(tree: &JsonAst, i: usize) {
     assert_eq!(tree.contents[range.start], b'"');
     assert_eq!(tree.contents[range.end - 1], b'"');
     assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
+    assert_ne!(tree.contents[range.end - 1], b'\\');
 }
 
 fn assert_object_valid(tree: &JsonAst, i: usize) {
@@ -563,7 +579,7 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
     assert!(range.len() >= 2);
     assert_eq!(tree.contents[range.start], b'{');
     assert_eq!(tree.contents[range.end - 1], b'}');
-    assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
+    assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
     let mut key_index = tree.extra[tree.tok_extra[i] as usize] as usize;
     while key_index != 0 {
@@ -571,6 +587,25 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
         assert_ne!(tree.tok_extra[key_index], 0);
         assert_eq!(tree.tok_children[key_index].len(), 1);
         key_index = tree.extra[tree.tok_extra[key_index] as usize] as usize;
+    }
+}
+
+fn assert_array_valid(tree: &JsonAst, i: usize) {
+    let range = &tree.tok_ranges[i];
+    assert!(range.len() >= 2);
+    assert_eq!(tree.contents[range.start], b'[');
+    assert_eq!(tree.contents[range.end - 1], b']');
+    assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
+
+    // first "value" index in linked list should be array
+
+    let mut value_index = tree.extra[tree.tok_extra[i] as usize] as usize;
+    assert_eq!(value_index, i);
+    let mut next_index = tree.extra[tree.tok_extra[i] as usize + 1] as usize;
+    while next_index != 0 {
+        value_index = tree.extra[next_index] as usize;
+        next_index = tree.extra[next_index + 1] as usize;
+        assert_ne!(value_index, 0);
     }
 }
 
@@ -583,6 +618,7 @@ fn assert_tree_valid(tree: &JsonAst) {
             TokenType::String => assert_string_valid(tree, i),
             TokenType::Number => assert_number_valid(tree, i),
             TokenType::Object => assert_object_valid(tree, i),
+            TokenType::Array => assert_array_valid(tree, i),
             _ => {}
         }
     }
