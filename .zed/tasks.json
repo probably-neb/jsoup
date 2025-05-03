@@ -1,0 +1,14 @@
+// Static tasks configuration.
+//
+// Example:
+[
+  {
+    "label": "Build",
+    "allow_concurrent_runs": false,
+    "command": "cargo",
+    "args": [
+      "build"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
+]

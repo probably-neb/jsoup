@@ -1,0 +1,188 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "auto_update_extensions": {
+    "proto": false
+  },
+  "ssh_connections": [
+    {
+      "host": "localhost",
+      "projects": [
+        {
+          "paths": [
+            "~/Zed"
+          ]
+        },
+        {
+          "paths": [
+            "~/Zed/example-project/pyright-project"
+          ]
+        }
+      ]
+    }
+  ],
+  "assistant": {
+    "profiles": {
+      "ask": {
+        "name": "Ask",
+        "tools": {
+          "contents": true,
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": false,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true,
+          "terminal": true
+        },
+        "enable_all_context_servers": false,
+        "context_servers": {}
+      }
+    },
+    "inline_assistant_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-5-sonnet-20240620-fast-edit"
+    },
+    "always_allow_tool_actions": true,
+    "default_profile": "write",
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-7-sonnet-latest"
+    },
+    "version": "2"
+  },
+  "features": {
+    "edit_prediction_provider": "zed"
+  },
+  "terminal": {
+    "shell": {
+      "program": "/opt/homebrew/bin/fish"
+    }
+  },
+  "dap": {
+    "LLDB": {
+      "binary": "/opt/homebrew/Cellar/llvm/20.1.1/bin/lldb-dap"
+    }
+  },
+  "remove_trailing_whitespace_on_save": true,
+  // "show_whitespaces": "all",
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "checkOnSave": {
+          "allTargets": true
+        },
+        "cargo": {
+          "allTargets": true,
+          "targetDir": "target/rust-analyzer"
+        },
+        "check": {
+          "workspace": true
+        }
+      }
+    },
+    "vscode-html-language-server": {
+      // "binary": {
+      //   "path": "/Users/neb/.local/share/mise/installs/node/23.8.0/bin/node",
+      //   "arguments": [
+      //     "/Users/neb/Zed/vscode-langservers-extracted/bin/vscode-html-language-server",
+      //     "--stdio"
+      //   ]
+      //   // "ignore_system_version": true
+      // }
+    }
+  },
+  "formatter": "language_server",
+  "languages": {
+    "Python": {
+      "language_servers": [
+        "!pyright",
+        "basedpyright",
+        "ruff"
+      ],
+      "format_on_save": "on",
+      "formatter": [
+        // {
+        //   "code_actions": {
+        //     "source.fixAll.ruff": true,
+        //     "source.organizeImports.ruff": true
+        //   }
+        // },
+        // {
+        //   "external": {
+        //     "command": "sh",
+        //     "arguments": ["-c", "sleep 1; exit 1"]
+        //   }
+        // },
+        {
+          "language_server": {
+            "name": "ruff"
+          }
+        }
+      ]
+    },
+    "Markdown": {
+      // "format_on_save": "off",
+      // "remove_trailing_whitespace_on_save": false
+    },
+    "TOML": {
+      "format_on_save": "on",
+      "formatter": [
+        {
+          "external": {
+            "command": "sed",
+            "arguments": [
+              "/version/d"
+            ]
+          }
+        }
+      ]
+    },
+    "TSX": {
+      "code_actions_on_format": {
+        "source.organizeImports": true
+      },
+      "formatter": [
+        "prettier",
+        {
+          "code_actions": {
+            "source.organizeImports": true
+          }
+        }
+      ]
+    },
+    "Svelte": {
+      "language_servers": []
+    }
+  },
+  "line_indicator_format": null,
+  "vim_mode": true,
+  "ui_font_size": 16,
+  "buffer_font_size": 17.0,
+  "theme": {
+    "mode": "system",
+    "light": "macOS Classic Dark",
+    "dark": "Gruvbox Dark Hard"
+  },
+  "icon_theme": {
+    "mode": "system",
+    "light": "Catppuccin Mocha",
+    "dark": "Catppuccin Mocha"
+  },
+  "vim": {
+    "toggle_relative_line_numbers": true
+  },
+  "experimental.theme_overrides": {},
+  "log": {
+    // "project.format": "trace"
+  }
+}
