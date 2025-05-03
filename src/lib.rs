@@ -1,5 +1,8 @@
 use std::{fmt::Display, ops::Range};
 
+const NUM_NEGATIVE: u32 = 1 << 0;
+const NUM_FLOAT: u32 = 1 << 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
     Array,
@@ -359,18 +362,29 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             _ => break,
         }
     }
-    if *cursor == start + 1 && tree.contents[start] == b'-' {
+    let is_negative = tree.contents[start] == b'-';
+    if *cursor == start + 1 && is_negative {
         return Err(ParseError::InvalidNumber);
     }
-    let has_leading_0 = tree.contents[start] == b'0'
-        || (tree.contents[start] == b'-' && tree.contents[start + 1] == b'0');
-    if !is_float && has_leading_0 {
+    let value_start = start + is_negative as usize;
+    let is_int_with_leading_0 =
+        !is_float && *cursor - value_start >= 1 && tree.contents[value_start] == b'0';
+    if is_int_with_leading_0 {
         return Err(ParseError::InvalidNumber);
     }
+
+    let mut extra = 0;
+    if is_negative {
+        extra |= NUM_NEGATIVE;
+    }
+    if is_float {
+        extra |= NUM_FLOAT;
+    }
+
     tree.tok_ranges.push(start..*cursor);
     tree.tok_types.push(TokenType::Number);
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_extra.push(0);
+    tree.tok_extra.push(extra);
     Ok(())
 }
 
