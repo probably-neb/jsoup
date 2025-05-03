@@ -419,9 +419,13 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     let children_start = obj_start + 1;
     tree.tok_children.push(children_start..children_start);
     tree.tok_types.push(TokenType::Object);
-    tree.tok_extra.push(0);
+    let obj_extra_index = tree.extra.len() as u32;
+    tree.extra.push(0);
+    tree.tok_extra.push(obj_extra_index);
 
     *cursor += 1;
+
+    let mut prev_extra_link = obj_extra_index;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -435,11 +439,20 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         if tree.contents[*cursor] != b'"' {
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
+        let key_index = tree.next_index();
         parse_string(tree, cursor)?;
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
+        let key_extra_index = tree.extra.len() as u32;
+        tree.extra.push(0);
+        tree.tok_extra[key_index] = key_extra_index;
+        tree.extra[prev_extra_link as usize] = key_index as u32;
+        prev_extra_link = key_extra_index;
+
+        let value_index = tree.next_index();
+        tree.tok_children[key_index] = value_index..value_index + 1;
 
         if tree.contents[*cursor] != b':' {
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
@@ -542,9 +555,23 @@ fn assert_string_valid(tree: &JsonAst, i: usize) {
     assert!(range.len() >= 2);
     assert_eq!(tree.contents[range.start], b'"');
     assert_eq!(tree.contents[range.end - 1], b'"');
-    assert_eq!(tree.tok_extra[i], 0);
-    assert_eq!(tree.tok_children[i], EMPTY_RANGE);
     assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
+}
+
+fn assert_object_valid(tree: &JsonAst, i: usize) {
+    let range = &tree.tok_ranges[i];
+    assert!(range.len() >= 2);
+    assert_eq!(tree.contents[range.start], b'{');
+    assert_eq!(tree.contents[range.end - 1], b'}');
+    assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
+
+    let mut key_index = tree.extra[tree.tok_extra[i] as usize] as usize;
+    while key_index != 0 {
+        assert_eq!(tree.tok_types[key_index], TokenType::String);
+        assert_ne!(tree.tok_extra[key_index], 0);
+        assert_eq!(tree.tok_children[key_index].len(), 1);
+        key_index = tree.extra[tree.tok_extra[key_index] as usize] as usize;
+    }
 }
 
 fn assert_tree_valid(tree: &JsonAst) {
@@ -555,6 +582,7 @@ fn assert_tree_valid(tree: &JsonAst) {
         match tok_type {
             TokenType::String => assert_string_valid(tree, i),
             TokenType::Number => assert_number_valid(tree, i),
+            TokenType::Object => assert_object_valid(tree, i),
             _ => {}
         }
     }
