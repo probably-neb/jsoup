@@ -6,6 +6,7 @@ const JSON_SMOL: &'static str = r#"
 {
     "name": "John Doe",
     "age": 30,
+    "pi": 3.14,
     "pets": [
        "dog",
        "cat",
@@ -216,16 +217,55 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     if *cursor + 1 > tree.contents.len() {
         return Err(ParseError::UnexpectedEndOfInput);
     }
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Int,
+        Frac,
+        Exp,
+    }
     let start = *cursor;
     *cursor += 1;
+    let mut state = State::Int;
+
+    let mut is_float = false;
+
     while *cursor < tree.contents.len() {
         match tree.contents[*cursor] {
-            // FIXME: floats
             b'0'..=b'9' => *cursor += 1,
+            b'.' => {
+                if state == State::Int {
+                    state = State::Frac;
+                    is_float = true;
+                    *cursor += 1
+                } else {
+                    return Err(ParseError::InvalidNumber);
+                }
+            }
+            b'e' | b'E' => {
+                if state == State::Frac || state == State::Int {
+                    state = State::Exp;
+                    is_float = true;
+                    *cursor += 1
+                } else {
+                    return Err(ParseError::InvalidNumber);
+                }
+            }
+            b'-' => {
+                if state == State::Exp {
+                    *cursor += 1;
+                } else {
+                    return Err(ParseError::InvalidNumber);
+                }
+            }
             _ => break,
         }
     }
     if *cursor == start + 1 && tree.contents[start] == b'-' {
+        return Err(ParseError::InvalidNumber);
+    }
+    let has_leading_0 = tree.contents[start] == b'0'
+        || (tree.contents[start] == b'-' && tree.contents[start + 1] == b'0');
+    if !is_float && has_leading_0 {
         return Err(ParseError::InvalidNumber);
     }
     tree.tok_ranges.push(start..*cursor);
