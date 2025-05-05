@@ -631,3 +631,60 @@ fn assert_tree_valid(tree: &JsonAst) {
         }
     }
 }
+
+pub struct ObjectItemIter<'a> {
+    tree: &'a JsonAst,
+    key_index: usize,
+}
+
+impl<'a> ObjectItemIter<'a> {
+    pub fn new(tree: &'a JsonAst, obj_index: usize) -> Self {
+        assert_eq!(tree.tok_types[obj_index], TokenType::Object);
+        let key_index = tree.extra[tree.tok_extra[obj_index] as usize] as usize;
+        ObjectItemIter { tree, key_index }
+    }
+}
+
+impl<'a> Iterator for ObjectItemIter<'a> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.key_index == 0 {
+            return None;
+        }
+
+        let value_range = &self.tree.tok_children[self.key_index];
+        assert_eq!(value_range.len(), 1);
+        let value_index = value_range.start;
+        self.key_index = self.tree.extra[self.tree.tok_extra[self.key_index] as usize] as usize;
+        Some((self.key_index, value_index))
+    }
+}
+
+pub struct ArrayItemIter<'a> {
+    tree: &'a JsonAst,
+    next_index: usize,
+}
+
+impl<'a> ArrayItemIter<'a> {
+    pub fn new(tree: &'a JsonAst, array_index: usize) -> Self {
+        assert_eq!(tree.tok_types[array_index], TokenType::Array);
+        let next_index = tree.extra[tree.tok_extra[array_index] as usize + 1] as usize;
+        ArrayItemIter { tree, next_index }
+    }
+}
+
+impl<'a> Iterator for ArrayItemIter<'a> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_index == 0 {
+            return None;
+        }
+
+        let value_index = self.tree.extra[self.next_index] as usize;
+        self.next_index = self.tree.extra[self.next_index + 1] as usize;
+
+        Some(value_index)
+    }
+}
