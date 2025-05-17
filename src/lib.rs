@@ -2,6 +2,7 @@ use std::{fmt::Display, ops::Range};
 
 const NUM_NEGATIVE: u32 = 1 << 0;
 const NUM_FLOAT: u32 = 1 << 1;
+const EMPTY_RANGE: Range<usize> = 0..0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
@@ -46,40 +47,6 @@ impl JsonAst {
     }
 }
 
-/// Adjusts a byte range to ensure it falls on UTF-8 character boundaries
-pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
-    let contents_str = unsafe { std::str::from_utf8_unchecked(&bytes) };
-
-    // Find valid start position (move forward if needed)
-    let valid_start =
-        if range.start < contents_str.len() && !contents_str.is_char_boundary(range.start) {
-            // Find the next character boundary
-            let mut pos = range.start;
-            while pos < contents_str.len() && !contents_str.is_char_boundary(pos) {
-                pos += 1;
-            }
-            pos
-        } else {
-            range.start
-        };
-
-    // Find valid end position (move backward if needed)
-    let valid_end = if range.end <= contents_str.len() && !contents_str.is_char_boundary(range.end)
-    {
-        // Find the previous character boundary
-        let mut pos = range.end;
-        while pos > valid_start && !contents_str.is_char_boundary(pos) {
-            pos -= 1;
-        }
-        pos
-    } else {
-        range.end
-    };
-
-    let adjusted_range = valid_start..valid_end;
-    return &contents_str[adjusted_range];
-}
-
 #[derive(Debug)]
 pub enum ParseError {
     UnexpectedToken(char),
@@ -113,7 +80,13 @@ impl std::error::Error for ParseError {
     }
 }
 
-const EMPTY_RANGE: Range<usize> = 0..0;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PathEntry {
+    Str(String),
+    Idx(usize),
+}
+
+pub struct Path(Vec<PathEntry>);
 
 pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     let contents = input.as_bytes().to_vec();
@@ -687,4 +660,100 @@ impl<'a> Iterator for ArrayItemIter<'a> {
 
         Some(value_index)
     }
+}
+
+/// Adjusts a byte range to ensure it falls on UTF-8 character boundaries
+pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
+    let contents_str = unsafe { std::str::from_utf8_unchecked(&bytes) };
+
+    // Find valid start position (move forward if needed)
+    let valid_start =
+        if range.start < contents_str.len() && !contents_str.is_char_boundary(range.start) {
+            // Find the next character boundary
+            let mut pos = range.start;
+            while pos < contents_str.len() && !contents_str.is_char_boundary(pos) {
+                pos += 1;
+            }
+            pos
+        } else {
+            range.start
+        };
+
+    // Find valid end position (move backward if needed)
+    let valid_end = if range.end <= contents_str.len() && !contents_str.is_char_boundary(range.end)
+    {
+        // Find the previous character boundary
+        let mut pos = range.end;
+        while pos > valid_start && !contents_str.is_char_boundary(pos) {
+            pos -= 1;
+        }
+        pos
+    } else {
+        range.end
+    };
+
+    let adjusted_range = valid_start..valid_end;
+    return &contents_str[adjusted_range];
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum UpdateTarget {
+    Key,
+    Value,
+}
+
+pub fn update(
+    tree: &mut JsonAst,
+    path: &Path,
+    value: &serde_json::Value,
+    target: UpdateTarget,
+) -> bool {
+    let Some(index) = index_for_path(tree, path, target) else {
+        return false;
+    };
+}
+
+fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<usize> {
+    let mut index = 0;
+    let mut value_index = 0;
+
+    let path = &path.0;
+    if path.is_empty() {
+        return Some(0);
+    }
+    'segments: for segment in path {
+        match (segment, tree.tok_types[index]) {
+            (&PathEntry::Idx(idx), TokenType::Array) => {
+                value_index = 0;
+                let mut iter = ArrayItemIter::new(&tree, index);
+                for _ in 0..idx {
+                    iter.next()?;
+                }
+                index = iter.next()?;
+            }
+            (PathEntry::Str(key), TokenType::Object) => {
+                let iter = ObjectItemIter::new(&tree, index);
+                for (key_i, val_i) in iter {
+                    let key_str = tree.value_at(key_i).trim_matches('"');
+                    if key_str == key {
+                        index = key_i;
+                        value_index = val_i;
+                        continue 'segments;
+                    }
+                }
+                return None;
+            }
+            _ => {
+                return None;
+            }
+        }
+    }
+
+    if target == UpdateTarget::Value
+        && tree.tok_types[index] == TokenType::String
+        && value_index != 0
+    {
+        index = value_index;
+    }
+    Some(index)
 }
