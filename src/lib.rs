@@ -27,8 +27,14 @@ pub struct JsonAst {
 
 impl JsonAst {
     pub fn value_at(&self, index: usize) -> &str {
-        let range = &self.tok_ranges[index];
-        unsafe { std::str::from_utf8_unchecked(&self.contents[range.clone()]) }
+        let mut range = self.tok_ranges[index].clone();
+        if self.tok_types[index] == TokenType::String {
+            assert_eq!(self.contents[range.start], b'"');
+            assert_eq!(self.contents[range.end - 1], b'"');
+            range.start += 1;
+            range.end -= 1;
+        }
+        unsafe { std::str::from_utf8_unchecked(&self.contents[range]) }
     }
 
     pub fn value_for_char_range(&self, range: &Range<usize>) -> &str {
@@ -87,6 +93,20 @@ pub enum PathEntry {
 }
 
 pub struct Path(Vec<PathEntry>);
+
+impl Path {
+    fn from_str(s: &str) -> Path {
+        let mut path = Vec::new();
+        for item in s.split('.') {
+            if let Ok(idx) = item.parse::<usize>() {
+                path.push(PathEntry::Idx(idx));
+            } else {
+                path.push(PathEntry::Str(item.to_string()));
+            }
+        }
+        return Self(path);
+    }
+}
 
 pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     let contents = input.as_bytes().to_vec();
@@ -711,6 +731,31 @@ pub fn update(
     let Some(index) = index_for_path(tree, path, target) else {
         return false;
     };
+    if matches!(
+        value,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    ) {
+        return false;
+    }
+
+    let Ok(str) = serde_json::to_string(value) else {
+        // todo! error here?
+        return false;
+    };
+
+    let range = tree.tok_ranges[index].clone();
+    let start_idx = range.start;
+    let end_idx_new = start_idx + str.len();
+    let end_diff = end_idx_new - start_idx;
+    tree.tok_ranges[index].end = end_idx_new;
+    tree.contents
+        .splice(range, str.as_bytes().into_iter().cloned());
+    for i in index + 1..tree.tok_ranges.len() {
+        tree.tok_ranges[i].start += end_diff;
+        tree.tok_ranges[i].end += end_diff;
+    }
+
+    return true;
 }
 
 fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<usize> {
@@ -734,7 +779,8 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
             (PathEntry::Str(key), TokenType::Object) => {
                 let iter = ObjectItemIter::new(&tree, index);
                 for (key_i, val_i) in iter {
-                    let key_str = tree.value_at(key_i).trim_matches('"');
+                    // FIXME: first key str is object
+                    let key_str = tree.value_at(key_i);
                     if key_str == key {
                         index = key_i;
                         value_index = val_i;
@@ -756,4 +802,24 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
         index = value_index;
     }
     Some(index)
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn update_string_to_string() {
+        let json = r#"{ "key": "value" }"#;
+        let mut tree = parse(json).unwrap();
+        assert!(update(
+            &mut tree,
+            &Path::from_str("key"),
+            &serde_json::Value::String("new_value".to_string()),
+            UpdateTarget::Value,
+        ));
+        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
+        let new_contents_expected = r#"{ "key": "new_value" }"#;
+        assert_eq!(new_contents, new_contents_expected);
+    }
 }
