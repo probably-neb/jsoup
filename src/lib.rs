@@ -623,6 +623,18 @@ fn assert_tree_valid(tree: &JsonAst) {
             _ => {}
         }
     }
+
+    for i in 0..tree.tok_ranges.len() {
+        for j in 0..tree.tok_ranges.len() {
+            if i == j {
+                continue;
+            }
+            assert_ne!(
+                tree.tok_ranges[i], tree.tok_ranges[j],
+                "tok range {i} and {j} are the same"
+            );
+        }
+    }
 }
 
 pub struct ObjectItemIter<'a> {
