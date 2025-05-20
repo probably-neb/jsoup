@@ -661,8 +661,9 @@ impl<'a> Iterator for ObjectItemIter<'a> {
         let value_range = &self.tree.tok_children[self.key_index];
         assert_eq!(value_range.len(), 1);
         let value_index = value_range.start;
+        let key_index = self.key_index;
         self.key_index = self.tree.extra[self.tree.tok_extra[self.key_index] as usize] as usize;
-        Some((self.key_index, value_index))
+        Some((key_index, value_index))
     }
 }
 
@@ -791,7 +792,6 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
             (PathEntry::Str(key), TokenType::Object) => {
                 let iter = ObjectItemIter::new(&tree, index);
                 for (key_i, val_i) in iter {
-                    // FIXME: first key str is object
                     let key_str = tree.value_at(key_i);
                     if key_str == key {
                         index = key_i;
@@ -817,11 +817,29 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
 }
 
 #[cfg(test)]
+mod iter_tests {
+    use super::*;
+
+    #[test]
+    fn iter_object_keys() {
+        let json = r#"{ "key": "value" }"#;
+        let tree = parse(json).unwrap();
+        let mut iter = ObjectItemIter::new(&tree, 0);
+        let (key, value) = iter.next().expect("iter valid");
+        assert_ne!(key, 0);
+        assert_ne!(value, 0);
+        assert!(iter.next().is_none());
+        assert_eq!(tree.value_at(key), "key");
+        assert_eq!(tree.value_at(value), "value");
+    }
+}
+
+#[cfg(test)]
 mod update_tests {
     use super::*;
 
     #[test]
-    fn update_string_to_string() {
+    fn obj_string_value_to_string() {
         let json = r#"{ "key": "value" }"#;
         let mut tree = parse(json).unwrap();
         assert!(update(
