@@ -578,8 +578,17 @@ fn assert_string_valid(tree: &JsonAst, i: usize) {
 fn assert_object_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_ranges[i];
     assert!(range.len() >= 2);
-    assert_eq!(tree.contents[range.start], b'{');
-    assert_eq!(tree.contents[range.end - 1], b'}');
+    assert_eq!(
+        tree.contents[range.start], b'{',
+        "expected `{{` at start of obj. Found `{}`",
+        tree.contents[range.start] as char
+    );
+    assert_eq!(
+        tree.contents[range.end - 1],
+        b'}',
+        "expected `}}` at end of obj. Found `{}`",
+        tree.contents[range.end - 1] as char
+    );
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
     let mut key_index = tree.extra[tree.tok_extra[i] as usize] as usize;
@@ -758,14 +767,38 @@ pub fn update(
 
     let range = tree.tok_ranges[index].clone();
     let start_idx = range.start;
+    let end_idx = range.end;
     let end_idx_new = start_idx + str.len();
-    let end_diff = end_idx_new - start_idx;
+    let neg = end_idx > end_idx_new;
+    let end_diff = usize::abs_diff(end_idx_new, end_idx);
     tree.tok_ranges[index].end = end_idx_new;
     tree.contents
         .splice(range, str.as_bytes().into_iter().cloned());
-    for i in index + 1..tree.tok_ranges.len() {
-        tree.tok_ranges[i].start += end_diff;
-        tree.tok_ranges[i].end += end_diff;
+    if neg {
+        // PERF: only update parent containers
+        for i in 0..index {
+            let range = &mut tree.tok_ranges[i];
+            if range.end > index {
+                range.end -= end_diff;
+            }
+        }
+        for i in index + 1..tree.tok_ranges.len() {
+            let range = &mut tree.tok_ranges[i];
+            range.start -= end_diff;
+            range.end -= end_diff;
+        }
+    } else {
+        for i in 0..index {
+            let range = &mut tree.tok_ranges[i];
+            if range.end > end_idx {
+                range.end += end_diff;
+            }
+        }
+        for i in index + 1..tree.tok_ranges.len() {
+            let range = &mut tree.tok_ranges[i];
+            range.start += end_diff;
+            range.end += end_diff;
+        }
     }
 
     return true;
@@ -848,6 +881,8 @@ mod update_tests {
             &serde_json::Value::String("new_value".to_string()),
             UpdateTarget::Value,
         ));
+
+        assert_tree_valid(&tree);
         let new_contents = std::str::from_utf8(&tree.contents).unwrap();
         let new_contents_expected = r#"{ "key": "new_value" }"#;
         assert_eq!(new_contents, new_contents_expected);
