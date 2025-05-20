@@ -887,4 +887,20 @@ mod update_tests {
         let new_contents_expected = r#"{ "key": "new_value" }"#;
         assert_eq!(new_contents, new_contents_expected);
     }
+
+    #[test]
+    fn obj_string_value_to_float() {
+        let json = r#"{ "key": "value" }"#;
+        let mut tree = parse(json).unwrap();
+        assert!(update(
+            &mut tree,
+            &Path::from_str("key"),
+            &serde_json::Value::from(3.1459),
+            UpdateTarget::Value,
+        ));
+        assert_tree_valid(&tree);
+        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
+        let new_contents_expected = r#"{ "key": 3.1459 }"#;
+        assert_eq!(new_contents, new_contents_expected);
+    }
 }
