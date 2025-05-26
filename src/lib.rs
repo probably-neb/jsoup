@@ -29,8 +29,8 @@ impl JsonAst {
     pub fn value_at(&self, index: usize) -> &str {
         let mut range = self.tok_ranges[index].clone();
         if self.tok_types[index] == TokenType::String {
-            assert_eq!(self.contents[range.start], b'"');
-            assert_eq!(self.contents[range.end - 1], b'"');
+            #[cfg(debug_assertions)]
+            assert_string_valid(self, index);
             range.start += 1;
             range.end -= 1;
         }
@@ -542,7 +542,11 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
 
     let is_negative_sign = tree.contents[range.start] == b'-';
     let is_negative_extra = tree.tok_extra[i] & NUM_NEGATIVE != 0;
-    assert_eq!(is_negative_sign, is_negative_extra);
+    assert_eq!(
+        is_negative_sign, is_negative_extra,
+        "Expected negative sign on negative number, found is_negative={} and first_char={}",
+        is_negative_extra, tree.contents[range.start] as char
+    );
 
     let value = &tree.contents[range.clone()];
 
@@ -569,8 +573,17 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
 fn assert_string_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_ranges[i];
     assert!(range.len() >= 2);
-    assert_eq!(tree.contents[range.start], b'"');
-    assert_eq!(tree.contents[range.end - 1], b'"');
+    assert_eq!(
+        tree.contents[range.start], b'"',
+        "expected `\"` at start of string, found `{}`",
+        tree.contents[range.start] as char
+    );
+    assert_eq!(
+        tree.contents[range.end - 1],
+        b'"',
+        "expected `\"` at end of string, found `{}`",
+        tree.contents[range.end - 1] as char
+    );
     assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
     assert_ne!(tree.contents[range.end - 1], b'\\');
 }
@@ -629,7 +642,8 @@ fn assert_tree_valid(tree: &JsonAst) {
             TokenType::Number => assert_number_valid(tree, i),
             TokenType::Object => assert_object_valid(tree, i),
             TokenType::Array => assert_array_valid(tree, i),
-            _ => {}
+            TokenType::Boolean => {}
+            TokenType::Null => {}
         }
     }
 
@@ -757,13 +771,66 @@ pub fn update(
         value,
         serde_json::Value::Array(_) | serde_json::Value::Object(_)
     ) {
-        return false;
+        todo!("objects and array updates")
     }
 
     let Ok(str) = serde_json::to_string(value) else {
         // todo! error here?
         return false;
     };
+
+    let mut num_is_neg = false;
+    let mut num_is_float = false;
+
+    let tok_type_prev = tree.tok_types[index];
+    let tok_type_new = match value {
+        serde_json::Value::Bool(_) => TokenType::Boolean,
+        serde_json::Value::Null => TokenType::Null,
+        serde_json::Value::Number(n) => {
+            if !n.is_u64() && !n.is_i64() {
+                num_is_float = true;
+                num_is_neg = n.as_f64().unwrap() < 0.0;
+            } else if n.is_i64() && !n.is_u64() {
+                num_is_neg = true;
+                num_is_float = false;
+            } else if n.is_u64() {
+                num_is_neg = false;
+                num_is_float = false;
+            }
+            TokenType::Number
+        }
+        serde_json::Value::String(_) => TokenType::String,
+        serde_json::Value::Object(_) => todo!(stringify!(TokenType::Object)),
+        serde_json::Value::Array(_) => todo!(stringify!(TokenType::Array)),
+    };
+    tree.tok_types[index] = tok_type_new;
+    // update extra
+    {
+        // clear extra
+        match tok_type_prev {
+            TokenType::Array => todo!(),
+            TokenType::Object => todo!(),
+            TokenType::Number => tree.tok_extra[index] = 0,
+            // no extra
+            TokenType::Null | TokenType::String | TokenType::Boolean => {}
+        }
+
+        // update extra
+        match tok_type_new {
+            TokenType::Number => {
+                if num_is_float {
+                    tree.tok_extra[index] |= NUM_FLOAT;
+                }
+                if num_is_neg {
+                    tree.tok_extra[index] |= NUM_NEGATIVE;
+                }
+            }
+            TokenType::Object => todo!(),
+            TokenType::Array => todo!(),
+            // no extra
+            TokenType::Null | TokenType::Boolean | TokenType::String => {}
+        }
+    }
 
     let range = tree.tok_ranges[index].clone();
     let start_idx = range.start;
@@ -772,13 +839,18 @@ pub fn update(
     let neg = end_idx > end_idx_new;
     let end_diff = usize::abs_diff(end_idx_new, end_idx);
     tree.tok_ranges[index].end = end_idx_new;
+    eprintln!(
+        "replacing `{}` with `{}`",
+        std::str::from_utf8(&tree.contents[range.clone()]).unwrap(),
+        &str,
+    );
     tree.contents
         .splice(range, str.as_bytes().into_iter().cloned());
     if neg {
         // PERF: only update parent containers
         for i in 0..index {
             let range = &mut tree.tok_ranges[i];
-            if range.end > index {
+            if range.end > end_idx {
                 range.end -= end_diff;
             }
         }
@@ -901,6 +973,22 @@ mod update_tests {
         assert_tree_valid(&tree);
         let new_contents = std::str::from_utf8(&tree.contents).unwrap();
         let new_contents_expected = r#"{ "key": 3.1459 }"#;
+        assert_eq!(new_contents, new_contents_expected);
+    }
+
+    #[test]
+    fn obj_string_value_to_negative_float() {
+        let json = r#"{ "key": "value" }"#;
+        let mut tree = parse(json).unwrap();
+        assert!(update(
+            &mut tree,
+            &Path::from_str("key"),
+            &serde_json::Value::from(-3.1459),
+            UpdateTarget::Value,
+        ));
+        assert_tree_valid(&tree);
+        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
+        let new_contents_expected = r#"{ "key": -3.1459 }"#;
         assert_eq!(new_contents, new_contents_expected);
     }
 }
