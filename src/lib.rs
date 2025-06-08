@@ -18,10 +18,15 @@ pub enum TokenType {
 #[derive(Debug)]
 pub struct JsonAst {
     pub contents: Vec<u8>,
+    // todo: rename to tok_range
     pub tok_ranges: Vec<Range<usize>>,
+    // todo: rename to tok_type
     pub tok_types: Vec<TokenType>,
     pub tok_children: Vec<Range<usize>>,
+    // todo: rename to tok_meta
     pub tok_extra: Vec<u32>,
+    pub tok_next: Vec<u32>,
+    // todo: remove
     pub extra: Vec<u32>,
     pub comments: Vec<Range<usize>>,
 }
@@ -51,6 +56,7 @@ impl JsonAst {
         assert_eq!(self.tok_ranges.len(), self.tok_types.len());
         assert_eq!(self.tok_ranges.len(), self.tok_children.len());
         assert_eq!(self.tok_ranges.len(), self.tok_extra.len());
+        assert_eq!(self.tok_ranges.len(), self.tok_next.len());
     }
 }
 
@@ -118,6 +124,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         tok_types: Vec::new(),
         tok_children: Vec::new(),
         tok_extra: Vec::new(),
+        tok_next: Vec::new(),
         extra: Vec::new(),
         comments: Vec::new(),
     };
@@ -245,6 +252,7 @@ fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     tree.tok_types.push(TokenType::Null);
     tree.tok_children.push(EMPTY_RANGE);
     tree.tok_extra.push(0);
+    tree.tok_next.push(0);
     Ok(())
 }
 
@@ -261,6 +269,7 @@ fn parse_true(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     tree.tok_types.push(TokenType::Boolean);
     tree.tok_children.push(EMPTY_RANGE);
     tree.tok_extra.push(0);
+    tree.tok_next.push(0);
     Ok(())
 }
 
@@ -278,6 +287,7 @@ fn parse_false(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_types.push(TokenType::Boolean);
     tree.tok_children.push(EMPTY_RANGE);
     tree.tok_extra.push(0);
+    tree.tok_next.push(0);
     Ok(())
 }
 
@@ -306,7 +316,7 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 tree.tok_types.push(TokenType::String);
                 tree.tok_children.push(EMPTY_RANGE);
                 tree.tok_extra.push(0);
-                let value = tree.value_at(tree.next_index() - 1);
+                tree.tok_next.push(0);
                 return Ok(());
             }
             _ => *cursor += 1,
@@ -388,6 +398,7 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     tree.tok_types.push(TokenType::Number);
     tree.tok_children.push(EMPTY_RANGE);
     tree.tok_extra.push(extra);
+    tree.tok_next.push(0);
     Ok(())
 }
 
@@ -417,18 +428,18 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     if *cursor + 1 > tree.contents.len() {
         return Err(ParseError::UnexpectedEndOfInput);
     }
-    let obj_start = tree.next_index();
+    let obj_index = tree.next_index();
     tree.tok_ranges.push(*cursor..*cursor);
-    let children_start = obj_start + 1;
-    tree.tok_children.push(children_start..children_start);
+    let children_start = obj_index + 1;
+    tree.tok_children.push(EMPTY_RANGE);
     tree.tok_types.push(TokenType::Object);
-    let obj_extra_index = tree.extra.len() as u32;
     tree.extra.push(0);
-    tree.tok_extra.push(obj_extra_index);
+    tree.tok_extra.push(0);
+    tree.tok_next.push(0);
 
     *cursor += 1;
 
-    let mut prev_extra_link = obj_extra_index;
+    let mut key_index_prev = obj_index;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -444,28 +455,26 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         }
         let key_index = tree.next_index();
         parse_string(tree, cursor)?;
+        tree.tok_next[key_index_prev] = key_index as u32;
+        key_index_prev = key_index;
+
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
-        let key_extra_index = tree.extra.len() as u32;
-        tree.extra.push(0);
-        tree.tok_extra[key_index] = key_extra_index;
-        tree.extra[prev_extra_link as usize] = key_index as u32;
-        prev_extra_link = key_extra_index;
-
-        let value_index = tree.next_index();
-        tree.tok_children[key_index] = value_index..value_index + 1;
 
         if tree.contents[*cursor] != b':' {
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
         *cursor += 1;
+
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
 
+        let value_index = tree.next_index();
+        tree.tok_children[key_index] = value_index..value_index + 1;
         parse_value(tree, cursor)?;
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -479,9 +488,13 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
     }
+    // clear because we set without checking in loop
+    tree.tok_next[obj_index] = 0;
 
-    tree.tok_children[obj_start].end = tree.tok_types.len();
-    tree.tok_ranges[obj_start].end = *cursor;
+    if tree.next_index() > children_start {
+        tree.tok_children[obj_index] = children_start..tree.next_index();
+    }
+    tree.tok_ranges[obj_index].end = *cursor;
     return Ok(());
 }
 
@@ -492,16 +505,13 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_types.push(TokenType::Array);
     tree.tok_ranges.push(*cursor..*cursor);
     let children_start = array_index + 1;
-    tree.tok_children.push(children_start..children_start);
-
-    let arr_extra_index = tree.extra.len() as u32;
-    tree.tok_extra.push(arr_extra_index);
-    tree.extra.push(array_index as u32);
-
-    let mut value_extra_link_index = tree.extra.len();
-    tree.extra.push(0);
+    tree.tok_children.push(EMPTY_RANGE);
+    tree.tok_next.push(0);
+    tree.tok_extra.push(0);
 
     *cursor += 1;
+
+    let mut value_index_prev = array_index;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -514,12 +524,8 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         }
         let value_index = tree.next_index();
         parse_value(tree, cursor)?;
-        let value_extra_index = tree.extra.len() as u32;
-        tree.extra.push(value_index as u32);
-
-        tree.extra[value_extra_link_index] = value_extra_index;
-        value_extra_link_index = tree.extra.len();
-        tree.extra.push(0);
+        tree.tok_next[value_index_prev] = value_index as u32;
+        value_index_prev = value_index;
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
@@ -531,8 +537,12 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
     }
+    // clear because we set without checking in loop
+    tree.tok_next[array_index] = 0;
 
-    tree.tok_children[array_index].end = tree.tok_types.len();
+    if tree.next_index() > children_start {
+        tree.tok_children[array_index] = children_start..tree.next_index();
+    }
     tree.tok_ranges[array_index].end = *cursor;
     return Ok(());
 }
@@ -606,12 +616,12 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
     );
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
-    let mut key_index = tree.extra[tree.tok_extra[i] as usize] as usize;
+    let mut key_index = tree.tok_children[i].start;
     while key_index != 0 {
         assert_eq!(tree.tok_types[key_index], TokenType::String);
-        assert_ne!(tree.tok_extra[key_index], 0);
+        assert_eq!(tree.tok_extra[key_index], 0);
         assert_eq!(tree.tok_children[key_index].len(), 1);
-        key_index = tree.extra[tree.tok_extra[key_index] as usize] as usize;
+        key_index = tree.tok_next[key_index] as usize;
     }
 }
 
@@ -622,15 +632,9 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
     assert_eq!(tree.contents[range.end - 1], b']');
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
-    // first "value" index in linked list should be array
-
-    let mut value_index = tree.extra[tree.tok_extra[i] as usize] as usize;
-    assert_eq!(value_index, i);
-    let mut next_index = tree.extra[tree.tok_extra[i] as usize + 1] as usize;
-    while next_index != 0 {
-        value_index = tree.extra[next_index] as usize;
-        next_index = tree.extra[next_index + 1] as usize;
-        assert_ne!(value_index, 0);
+    let mut value_index = tree.tok_children[i].start;
+    while value_index != 0 {
+        value_index = tree.tok_next[value_index] as usize;
     }
 }
 
@@ -670,7 +674,7 @@ pub struct ObjectItemIter<'a> {
 impl<'a> ObjectItemIter<'a> {
     pub fn new(tree: &'a JsonAst, obj_index: usize) -> Self {
         assert_eq!(tree.tok_types[obj_index], TokenType::Object);
-        let key_index = tree.extra[tree.tok_extra[obj_index] as usize] as usize;
+        let key_index = tree.tok_children[obj_index].start;
         ObjectItemIter { tree, key_index }
     }
 }
@@ -687,7 +691,7 @@ impl<'a> Iterator for ObjectItemIter<'a> {
         assert_eq!(value_range.len(), 1);
         let value_index = value_range.start;
         let key_index = self.key_index;
-        self.key_index = self.tree.extra[self.tree.tok_extra[self.key_index] as usize] as usize;
+        self.key_index = self.tree.tok_next[self.key_index] as usize;
         Some((key_index, value_index))
     }
 }
@@ -700,7 +704,7 @@ pub struct ArrayItemIter<'a> {
 impl<'a> ArrayItemIter<'a> {
     pub fn new(tree: &'a JsonAst, array_index: usize) -> Self {
         assert_eq!(tree.tok_types[array_index], TokenType::Array);
-        let next_index = tree.extra[tree.tok_extra[array_index] as usize + 1] as usize;
+        let next_index = tree.tok_children[array_index].start;
         ArrayItemIter { tree, next_index }
     }
 }
@@ -713,8 +717,8 @@ impl<'a> Iterator for ArrayItemIter<'a> {
             return None;
         }
 
-        let value_index = self.tree.extra[self.next_index] as usize;
-        self.next_index = self.tree.extra[self.next_index + 1] as usize;
+        let value_index = self.next_index;
+        self.next_index = self.tree.tok_next[self.next_index] as usize;
 
         Some(value_index)
     }
@@ -930,7 +934,7 @@ mod iter_tests {
     use super::*;
 
     #[test]
-    fn iter_object_keys() {
+    fn iter_object_key() {
         let json = r#"{ "key": "value" }"#;
         let tree = parse(json).unwrap();
         let mut iter = ObjectItemIter::new(&tree, 0);
@@ -940,6 +944,22 @@ mod iter_tests {
         assert!(iter.next().is_none());
         assert_eq!(tree.value_at(key), "key");
         assert_eq!(tree.value_at(value), "value");
+    }
+
+    #[test]
+    fn iter_object_keys() {
+        let json = r#"{ "key": "value", "key2": "value2" }"#;
+        let tree = parse(json).unwrap();
+        let mut iter = ObjectItemIter::new(&tree, 0);
+        let (key, value) = iter.next().expect("iter has one item");
+        assert_ne!(key, 0);
+        assert_ne!(value, 0);
+        let (key, value) = iter.next().expect("iter has two items");
+        assert_ne!(key, 0);
+        assert_ne!(value, 0);
+        assert_eq!(tree.value_at(key), "key2");
+        assert_eq!(tree.value_at(value), "value2");
+        assert!(iter.next().is_none(), "iter only has two items");
     }
 }
 
