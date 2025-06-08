@@ -1,3 +1,4 @@
+pub use serde_json;
 use std::{fmt::Display, ops::Range};
 
 const NUM_NEGATIVE: u32 = 1 << 0;
@@ -92,7 +93,8 @@ pub enum PathEntry {
     Idx(usize),
 }
 
-pub struct Path(Vec<PathEntry>);
+#[derive(Debug)]
+pub struct Path(pub Vec<PathEntry>);
 
 impl Path {
     fn from_str(s: &str) -> Path {
@@ -632,7 +634,7 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
     }
 }
 
-fn assert_tree_valid(tree: &JsonAst) {
+pub fn assert_tree_valid(tree: &JsonAst) {
     tree.assert_lengths();
 
     // strings
