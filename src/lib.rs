@@ -135,13 +135,13 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         tree.assert_lengths();
 
         let Ok(_) = res else {
-            let context_start = cursor.saturating_sub(3);
-            let context_end = usize::min(cursor + 4, tree.contents.len());
-            eprintln!(
-                "Error at position {}: `{}`",
-                context_start,
-                tree.value_for_char_range(&(context_start..context_end)),
-            );
+            // let context_start = cursor.saturating_sub(3);
+            // let context_end = usize::min(cursor + 4, tree.contents.len());
+            // eprintln!(
+            //     "Error at position {}: `{}`",
+            //     context_start,
+            //     tree.value_for_char_range(&(context_start..context_end)),
+            // );
             return res.map(|_| tree);
         };
     }
@@ -766,6 +766,8 @@ pub fn update(
     value: &serde_json::Value,
     target: UpdateTarget,
 ) -> bool {
+    // TODO: separate this into two functions, update_path and update_index
+    //       if combined with storing target in path, this removes the need for target entirely
     let Some(index) = index_for_path(tree, path, target) else {
         return false;
     };
