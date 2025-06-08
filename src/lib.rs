@@ -19,22 +19,20 @@ pub enum TokenType {
 pub struct JsonAst {
     pub contents: Vec<u8>,
     // todo: rename to tok_range
-    pub tok_ranges: Vec<Range<usize>>,
+    pub tok_range: Vec<Range<usize>>,
     // todo: rename to tok_type
-    pub tok_types: Vec<TokenType>,
+    pub tok_type: Vec<TokenType>,
     pub tok_children: Vec<Range<usize>>,
     // todo: rename to tok_meta
-    pub tok_extra: Vec<u32>,
+    pub tok_meta: Vec<u32>,
     pub tok_next: Vec<u32>,
-    // todo: remove
-    pub extra: Vec<u32>,
     pub comments: Vec<Range<usize>>,
 }
 
 impl JsonAst {
     pub fn value_at(&self, index: usize) -> &str {
-        let mut range = self.tok_ranges[index].clone();
-        if self.tok_types[index] == TokenType::String {
+        let mut range = self.tok_range[index].clone();
+        if self.tok_type[index] == TokenType::String {
             #[cfg(debug_assertions)]
             assert_string_valid(self, index);
             range.start += 1;
@@ -49,14 +47,14 @@ impl JsonAst {
 
     pub fn next_index(&self) -> usize {
         self.assert_lengths();
-        return self.tok_types.len();
+        return self.tok_type.len();
     }
 
     fn assert_lengths(&self) {
-        assert_eq!(self.tok_ranges.len(), self.tok_types.len());
-        assert_eq!(self.tok_ranges.len(), self.tok_children.len());
-        assert_eq!(self.tok_ranges.len(), self.tok_extra.len());
-        assert_eq!(self.tok_ranges.len(), self.tok_next.len());
+        assert_eq!(self.tok_range.len(), self.tok_type.len());
+        assert_eq!(self.tok_range.len(), self.tok_children.len());
+        assert_eq!(self.tok_range.len(), self.tok_meta.len());
+        assert_eq!(self.tok_range.len(), self.tok_next.len());
     }
 }
 
@@ -120,12 +118,11 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     let contents = input.as_bytes().to_vec();
     let mut tree = JsonAst {
         contents,
-        tok_ranges: Vec::new(),
-        tok_types: Vec::new(),
+        tok_range: Vec::new(),
+        tok_type: Vec::new(),
         tok_children: Vec::new(),
-        tok_extra: Vec::new(),
+        tok_meta: Vec::new(),
         tok_next: Vec::new(),
-        extra: Vec::new(),
         comments: Vec::new(),
     };
 
@@ -247,11 +244,11 @@ fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b'n', b'u', b'l', b'l'] {
         return Err(ParseError::InvalidNull);
     }
-    tree.tok_ranges.push(*cursor..*cursor + 4);
+    tree.tok_range.push(*cursor..*cursor + 4);
     *cursor += 4;
-    tree.tok_types.push(TokenType::Null);
+    tree.tok_type.push(TokenType::Null);
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_extra.push(0);
+    tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
 }
@@ -264,11 +261,11 @@ fn parse_true(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b't', b'r', b'u', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
-    tree.tok_ranges.push(*cursor..*cursor + 4);
+    tree.tok_range.push(*cursor..*cursor + 4);
     *cursor += 4;
-    tree.tok_types.push(TokenType::Boolean);
+    tree.tok_type.push(TokenType::Boolean);
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_extra.push(0);
+    tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
 }
@@ -282,11 +279,11 @@ fn parse_false(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     if &tree.contents[*cursor..*cursor + 5] != [b'f', b'a', b'l', b's', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
-    tree.tok_ranges.push(*cursor..*cursor + 5);
+    tree.tok_range.push(*cursor..*cursor + 5);
     *cursor += 5;
-    tree.tok_types.push(TokenType::Boolean);
+    tree.tok_type.push(TokenType::Boolean);
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_extra.push(0);
+    tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
 }
@@ -312,10 +309,10 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 let range = start..*cursor;
                 assert_eq!(tree.contents[range.start], b'"');
                 assert_eq!(tree.contents[range.end - 1], b'"');
-                tree.tok_ranges.push(range);
-                tree.tok_types.push(TokenType::String);
+                tree.tok_range.push(range);
+                tree.tok_type.push(TokenType::String);
                 tree.tok_children.push(EMPTY_RANGE);
-                tree.tok_extra.push(0);
+                tree.tok_meta.push(0);
                 tree.tok_next.push(0);
                 return Ok(());
             }
@@ -386,18 +383,18 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         return Err(ParseError::InvalidNumber);
     }
 
-    let mut extra = 0;
+    let mut meta = 0;
     if is_negative {
-        extra |= NUM_NEGATIVE;
+        meta |= NUM_NEGATIVE;
     }
     if is_float {
-        extra |= NUM_FLOAT;
+        meta |= NUM_FLOAT;
     }
 
-    tree.tok_ranges.push(start..*cursor);
-    tree.tok_types.push(TokenType::Number);
+    tree.tok_range.push(start..*cursor);
+    tree.tok_type.push(TokenType::Number);
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_extra.push(extra);
+    tree.tok_meta.push(meta);
     tree.tok_next.push(0);
     Ok(())
 }
@@ -429,17 +426,17 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         return Err(ParseError::UnexpectedEndOfInput);
     }
     let obj_index = tree.next_index();
-    tree.tok_ranges.push(*cursor..*cursor);
+    tree.tok_range.push(*cursor..*cursor);
     let children_start = obj_index + 1;
     tree.tok_children.push(EMPTY_RANGE);
-    tree.tok_types.push(TokenType::Object);
-    tree.extra.push(0);
-    tree.tok_extra.push(0);
+    tree.tok_type.push(TokenType::Object);
+    tree.tok_meta.push(0);
     tree.tok_next.push(0);
 
     *cursor += 1;
 
     let mut key_index_prev = obj_index;
+    let mut key_count = 0;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -457,6 +454,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         parse_string(tree, cursor)?;
         tree.tok_next[key_index_prev] = key_index as u32;
         key_index_prev = key_index;
+        key_count += 1;
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
@@ -491,27 +489,30 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     // clear because we set without checking in loop
     tree.tok_next[obj_index] = 0;
 
+    tree.tok_meta[obj_index] = key_count;
+
     if tree.next_index() > children_start {
         tree.tok_children[obj_index] = children_start..tree.next_index();
     }
-    tree.tok_ranges[obj_index].end = *cursor;
+    tree.tok_range[obj_index].end = *cursor;
     return Ok(());
 }
 
 fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
     tree.assert_lengths();
     assert_eq!(tree.contents[*cursor], b'[');
-    let array_index = tree.tok_types.len();
-    tree.tok_types.push(TokenType::Array);
-    tree.tok_ranges.push(*cursor..*cursor);
+    let array_index = tree.tok_type.len();
+    tree.tok_type.push(TokenType::Array);
+    tree.tok_range.push(*cursor..*cursor);
     let children_start = array_index + 1;
     tree.tok_children.push(EMPTY_RANGE);
     tree.tok_next.push(0);
-    tree.tok_extra.push(0);
+    tree.tok_meta.push(0);
 
     *cursor += 1;
 
     let mut value_index_prev = array_index;
+    let mut value_count = 0;
 
     loop {
         let eof = parse_any_ignore_maybe(tree, cursor)?;
@@ -526,6 +527,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         parse_value(tree, cursor)?;
         tree.tok_next[value_index_prev] = value_index as u32;
         value_index_prev = value_index;
+        value_count += 1;
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
@@ -540,20 +542,21 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     // clear because we set without checking in loop
     tree.tok_next[array_index] = 0;
 
+    tree.tok_meta[array_index] = value_count;
     if tree.next_index() > children_start {
         tree.tok_children[array_index] = children_start..tree.next_index();
     }
-    tree.tok_ranges[array_index].end = *cursor;
+    tree.tok_range[array_index].end = *cursor;
     return Ok(());
 }
 
 fn assert_number_valid(tree: &JsonAst, i: usize) {
-    let range = &tree.tok_ranges[i];
+    let range = &tree.tok_range[i];
     assert!(is_start_of_number(tree.contents[range.start]));
     assert_eq!(tree.tok_children[i], EMPTY_RANGE);
 
     let is_negative_sign = tree.contents[range.start] == b'-';
-    let is_negative_extra = tree.tok_extra[i] & NUM_NEGATIVE != 0;
+    let is_negative_extra = tree.tok_meta[i] & NUM_NEGATIVE != 0;
     assert_eq!(
         is_negative_sign, is_negative_extra,
         "Expected negative sign on negative number, found is_negative={} and first_char={}",
@@ -578,12 +581,12 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
     let is_float_scientific = u32::max(count(value, b'e'), count(value, b'E')) != 0;
     let is_float_frac = count(value, b'.') != 0;
     let is_float = is_float_scientific || is_float_frac;
-    let is_float_extra = tree.tok_extra[i] & NUM_FLOAT != 0;
+    let is_float_extra = tree.tok_meta[i] & NUM_FLOAT != 0;
     assert!(is_float_extra == is_float);
 }
 
 fn assert_string_valid(tree: &JsonAst, i: usize) {
-    let range = &tree.tok_ranges[i];
+    let range = &tree.tok_range[i];
     assert!(range.len() >= 2);
     assert_eq!(
         tree.contents[range.start], b'"',
@@ -601,7 +604,7 @@ fn assert_string_valid(tree: &JsonAst, i: usize) {
 }
 
 fn assert_object_valid(tree: &JsonAst, i: usize) {
-    let range = &tree.tok_ranges[i];
+    let range = &tree.tok_range[i];
     assert!(range.len() >= 2);
     assert_eq!(
         tree.contents[range.start], b'{',
@@ -616,33 +619,47 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
     );
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
+    let expected_count = tree.tok_meta[i];
+    let mut found_count = 0;
     let mut key_index = tree.tok_children[i].start;
     while key_index != 0 {
-        assert_eq!(tree.tok_types[key_index], TokenType::String);
-        assert_eq!(tree.tok_extra[key_index], 0);
+        assert_eq!(tree.tok_type[key_index], TokenType::String);
+        assert_eq!(tree.tok_meta[key_index], 0);
         assert_eq!(tree.tok_children[key_index].len(), 1);
         key_index = tree.tok_next[key_index] as usize;
+        found_count += 1;
     }
+    assert_eq!(
+        expected_count, found_count,
+        "object has correct number of keys"
+    );
 }
 
 fn assert_array_valid(tree: &JsonAst, i: usize) {
-    let range = &tree.tok_ranges[i];
+    let range = &tree.tok_range[i];
     assert!(range.len() >= 2);
     assert_eq!(tree.contents[range.start], b'[');
     assert_eq!(tree.contents[range.end - 1], b']');
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
+    let expected_count = tree.tok_meta[i];
+    let mut found_count = 0;
     let mut value_index = tree.tok_children[i].start;
     while value_index != 0 {
         value_index = tree.tok_next[value_index] as usize;
+        found_count += 1;
     }
+    assert_eq!(
+        expected_count, found_count,
+        "array has correct number of values"
+    );
 }
 
 pub fn assert_tree_valid(tree: &JsonAst) {
     tree.assert_lengths();
 
     // strings
-    for (i, &tok_type) in tree.tok_types.iter().enumerate() {
+    for (i, &tok_type) in tree.tok_type.iter().enumerate() {
         match tok_type {
             TokenType::String => assert_string_valid(tree, i),
             TokenType::Number => assert_number_valid(tree, i),
@@ -653,13 +670,13 @@ pub fn assert_tree_valid(tree: &JsonAst) {
         }
     }
 
-    for i in 0..tree.tok_ranges.len() {
-        for j in 0..tree.tok_ranges.len() {
+    for i in 0..tree.tok_range.len() {
+        for j in 0..tree.tok_range.len() {
             if i == j {
                 continue;
             }
             assert_ne!(
-                tree.tok_ranges[i], tree.tok_ranges[j],
+                tree.tok_range[i], tree.tok_range[j],
                 "tok range {i} and {j} are the same"
             );
         }
@@ -673,7 +690,7 @@ pub struct ObjectItemIter<'a> {
 
 impl<'a> ObjectItemIter<'a> {
     pub fn new(tree: &'a JsonAst, obj_index: usize) -> Self {
-        assert_eq!(tree.tok_types[obj_index], TokenType::Object);
+        assert_eq!(tree.tok_type[obj_index], TokenType::Object);
         let key_index = tree.tok_children[obj_index].start;
         ObjectItemIter { tree, key_index }
     }
@@ -703,7 +720,7 @@ pub struct ArrayItemIter<'a> {
 
 impl<'a> ArrayItemIter<'a> {
     pub fn new(tree: &'a JsonAst, array_index: usize) -> Self {
-        assert_eq!(tree.tok_types[array_index], TokenType::Array);
+        assert_eq!(tree.tok_type[array_index], TokenType::Array);
         let next_index = tree.tok_children[array_index].start;
         ArrayItemIter { tree, next_index }
     }
@@ -790,7 +807,7 @@ pub fn update(
     let mut num_is_neg = false;
     let mut num_is_float = false;
 
-    let tok_type_prev = tree.tok_types[index];
+    let tok_type_prev = tree.tok_type[index];
     let tok_type_new = match value {
         serde_json::Value::Bool(_) => TokenType::Boolean,
         serde_json::Value::Null => TokenType::Null,
@@ -811,14 +828,14 @@ pub fn update(
         serde_json::Value::Object(_) => todo!(stringify!(TokenType::Object)),
         serde_json::Value::Array(_) => todo!(stringify!(TokenType::Array)),
     };
-    tree.tok_types[index] = tok_type_new;
+    tree.tok_type[index] = tok_type_new;
     // update extra
     {
         // clear extra
         match tok_type_prev {
             TokenType::Array => todo!(),
             TokenType::Object => todo!(),
-            TokenType::Number => tree.tok_extra[index] = 0,
+            TokenType::Number => tree.tok_meta[index] = 0,
             // no extra
             TokenType::Null | TokenType::String | TokenType::Boolean => {}
         }
@@ -827,10 +844,10 @@ pub fn update(
         match tok_type_new {
             TokenType::Number => {
                 if num_is_float {
-                    tree.tok_extra[index] |= NUM_FLOAT;
+                    tree.tok_meta[index] |= NUM_FLOAT;
                 }
                 if num_is_neg {
-                    tree.tok_extra[index] |= NUM_NEGATIVE;
+                    tree.tok_meta[index] |= NUM_NEGATIVE;
                 }
             }
             TokenType::Object => todo!(),
@@ -840,13 +857,13 @@ pub fn update(
         }
     }
 
-    let range = tree.tok_ranges[index].clone();
+    let range = tree.tok_range[index].clone();
     let start_idx = range.start;
     let end_idx = range.end;
     let end_idx_new = start_idx + str.len();
     let neg = end_idx > end_idx_new;
     let end_diff = usize::abs_diff(end_idx_new, end_idx);
-    tree.tok_ranges[index].end = end_idx_new;
+    tree.tok_range[index].end = end_idx_new;
     eprintln!(
         "replacing `{}` with `{}`",
         std::str::from_utf8(&tree.contents[range.clone()]).unwrap(),
@@ -857,25 +874,25 @@ pub fn update(
     if neg {
         // PERF: only update parent containers
         for i in 0..index {
-            let range = &mut tree.tok_ranges[i];
+            let range = &mut tree.tok_range[i];
             if range.end > end_idx {
                 range.end -= end_diff;
             }
         }
-        for i in index + 1..tree.tok_ranges.len() {
-            let range = &mut tree.tok_ranges[i];
+        for i in index + 1..tree.tok_range.len() {
+            let range = &mut tree.tok_range[i];
             range.start -= end_diff;
             range.end -= end_diff;
         }
     } else {
         for i in 0..index {
-            let range = &mut tree.tok_ranges[i];
+            let range = &mut tree.tok_range[i];
             if range.end > end_idx {
                 range.end += end_diff;
             }
         }
-        for i in index + 1..tree.tok_ranges.len() {
-            let range = &mut tree.tok_ranges[i];
+        for i in index + 1..tree.tok_range.len() {
+            let range = &mut tree.tok_range[i];
             range.start += end_diff;
             range.end += end_diff;
         }
@@ -893,7 +910,7 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
         return Some(0);
     }
     'segments: for segment in path {
-        match (segment, tree.tok_types[index]) {
+        match (segment, tree.tok_type[index]) {
             (&PathEntry::Idx(idx), TokenType::Array) => {
                 value_index = 0;
                 let mut iter = ArrayItemIter::new(&tree, index);
@@ -921,7 +938,7 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
     }
 
     if target == UpdateTarget::Value
-        && tree.tok_types[index] == TokenType::String
+        && tree.tok_type[index] == TokenType::String
         && value_index != 0
     {
         index = value_index;
