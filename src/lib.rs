@@ -844,12 +844,16 @@ pub fn update(
             target_index..target_index + 1,
             source_contents.len(),
         );
-    } else if source_is_container && /* TODO: remove -> */ !target_is_container {
+    } else if source_is_container {
         let mut source_tree = parse(&source_contents).expect("sub_tree valid json");
         let offset_content = tree.tok_range[target_index].start;
         let offset_token = target_index;
 
-        let target_replacement_range = target_index..target_index + 1;
+        let target_replacement_range = if target_is_container {
+            target_index..usize::max(target_index + 1, tree.tok_children[target_index].end)
+        } else {
+            target_index..target_index + 1
+        };
 
         let source_insertion_range = target_index..target_index + source_tree.next_index();
 
@@ -890,18 +894,32 @@ pub fn update(
             .splice(target_replacement_range.clone(), source_tree.tok_next);
         tree.contents
             .splice(target_content_range.clone(), source_tree.contents);
-        if tok_next_prev != 0 {
-            tree.tok_next[target_index] = tok_next_prev;
+
+        let tok_diff = u32::abs_diff(
+            source_insertion_range.end as u32,
+            target_replacement_range.end as u32,
+        );
+
+        let tok_diff_positive;
+        let tok_diff_negative;
+
+        if source_insertion_range.end < target_replacement_range.end {
+            tok_diff_negative = tok_diff;
+            tok_diff_positive = 0;
+        } else {
+            tok_diff_negative = 0;
+            tok_diff_positive = tok_diff;
         }
 
-        for i in 0..source_insertion_range.start {
+        for i in 0..target_replacement_range.start {
             let tok_next = &mut tree.tok_next[i];
-            // fixme: assumes prev_len was 1, once replacing containers will need to do adjusted length
-            if *tok_next > source_insertion_range.start as u32
-                && *tok_next < source_insertion_range.end as u32
-            {
-                *tok_next += source_insertion_range.start as u32;
+            if *tok_next >= target_replacement_range.end as u32 {
+                *tok_next += tok_diff_positive;
+                *tok_next -= tok_diff_negative;
             }
+        }
+        if tok_next_prev != 0 {
+            tree.tok_next[target_index] = tok_next_prev + tok_diff_positive - tok_diff_negative;
         }
 
         update_token_ranges(
@@ -1113,6 +1131,29 @@ mod update_tests {
         assert_tree_valid(&tree);
         let new_contents = std::str::from_utf8(&tree.contents).unwrap();
         let new_contents_expected = r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#;
+        assert_eq!(new_contents, new_contents_expected);
+    }
+
+    #[test]
+    fn arr_object_value_to_array() {
+        let json = serde_json::json!([
+            1,
+            {
+                "key": "value"
+            },
+            3
+        ]);
+        let mut tree = parse(&serde_json::to_string(&json).unwrap()).unwrap();
+        assert!(update(
+            &mut tree,
+            &Path::from_str("1"),
+            &serde_json::json!([2]),
+            UpdateTarget::Value,
+        ));
+        dbg!(&tree);
+        assert_tree_valid(&tree);
+        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
+        let new_contents_expected = serde_json::to_string(&serde_json::json!([1, [2], 3])).unwrap();
         assert_eq!(new_contents, new_contents_expected);
     }
 }
