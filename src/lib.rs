@@ -403,7 +403,7 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     }
     let value_start = start + is_negative as usize;
     let is_int_with_leading_0 =
-        !is_float && *cursor - value_start >= 1 && tree.contents[value_start] == b'0';
+        !is_float && *cursor - value_start > 1 && tree.contents[value_start] == b'0';
     if is_int_with_leading_0 {
         return Err(ParseError::InvalidNumber);
     }
@@ -812,6 +812,9 @@ pub fn update(
     source_value: &serde_json::Value,
     target: UpdateTarget,
 ) -> bool {
+    if target == UpdateTarget::Key && !source_value.is_string() {
+        return false;
+    }
     // TODO: separate this into two functions, update_path and update_index
     //       if combined with storing target in path, this removes the need for target entirely
     let Some(target_index) = index_for_path(tree, path, target) else {
@@ -1175,7 +1178,6 @@ mod update_tests {
             &serde_json::json!([2]),
             UpdateTarget::Value,
         ));
-        dbg!(&tree);
         assert_tree_valid(&tree);
         let new_contents = std::str::from_utf8(&tree.contents).unwrap();
         let new_contents_expected = serde_json::to_string(&serde_json::json!([1, [2], 3])).unwrap();
