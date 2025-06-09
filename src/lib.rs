@@ -784,203 +784,170 @@ pub enum UpdateTarget {
 pub fn update(
     tree: &mut JsonAst,
     path: &Path,
-    value: &serde_json::Value,
+    source_value: &serde_json::Value,
     target: UpdateTarget,
 ) -> bool {
     // TODO: separate this into two functions, update_path and update_index
     //       if combined with storing target in path, this removes the need for target entirely
-    let Some(index) = index_for_path(tree, path, target) else {
+    let Some(target_index) = index_for_path(tree, path, target) else {
         return false;
     };
-    let val_is_container = value.is_array() || value.is_object();
 
-    let Ok(str) = serde_json::to_string(value) else {
+    let Ok(source_contents) = serde_json::to_string(source_value) else {
         // todo! error here?
         return false;
     };
 
-    let mut num_is_neg = false;
-    let mut num_is_float = false;
-
-    let tok_type_prev = tree.tok_type[index];
-    let tok_type_new = match value {
+    let source_token_type = match source_value {
         serde_json::Value::Bool(_) => TokenType::Boolean,
         serde_json::Value::Null => TokenType::Null,
-        serde_json::Value::Number(n) => {
-            if !n.is_u64() && !n.is_i64() {
-                num_is_float = true;
-                num_is_neg = n.as_f64().unwrap() < 0.0;
-            } else if n.is_i64() && !n.is_u64() {
-                num_is_neg = true;
-                num_is_float = false;
-            } else if n.is_u64() {
-                num_is_neg = false;
-                num_is_float = false;
-            }
-            TokenType::Number
-        }
+        serde_json::Value::Number(_) => TokenType::Number,
         serde_json::Value::String(_) => TokenType::String,
         serde_json::Value::Object(_) => TokenType::Object,
         serde_json::Value::Array(_) => TokenType::Array,
     };
-    if !val_is_container {
-        tree.tok_type[index] = tok_type_new;
+    let target_token_type = tree.tok_type[target_index];
 
-        // clear extra
-        match tok_type_prev {
-            TokenType::Array => todo!(),
-            TokenType::Object => todo!(),
-            TokenType::Number => tree.tok_meta[index] = 0,
-            // no extra
-            TokenType::Null | TokenType::String | TokenType::Boolean => {}
-        }
+    let target_is_container =
+        target_token_type == TokenType::Object || target_token_type == TokenType::Array;
+    let source_is_container =
+        source_token_type == TokenType::Object || source_token_type == TokenType::Array;
 
-        // update extra and tree
-        match tok_type_new {
-            TokenType::Number => {
-                if num_is_float {
-                    tree.tok_meta[index] |= NUM_FLOAT;
+    if !target_is_container && !source_is_container {
+        tree.tok_type[target_index] = source_token_type;
+
+        tree.tok_meta[target_index] = 0;
+
+        if let serde_json::Value::Number(n) = source_value {
+            let mut meta = 0;
+            if n.is_f64() {
+                meta |= NUM_FLOAT;
+                if n.as_f64().unwrap() < 0.0 {
+                    meta |= NUM_NEGATIVE;
                 }
-                if num_is_neg {
-                    tree.tok_meta[index] |= NUM_NEGATIVE;
-                }
+            } else if n.is_i64() && !n.is_u64() {
+                meta |= NUM_NEGATIVE;
+                meta &= !NUM_FLOAT;
             }
-            TokenType::Object => unreachable!(),
-            TokenType::Array => unreachable!(),
-            // no extra
-            TokenType::Null | TokenType::Boolean | TokenType::String => {}
+            tree.tok_meta[target_index] = meta;
         }
 
-        let range = tree.tok_range[index].clone();
-        let start_idx = range.start;
-        let end_idx = range.end;
-        let end_idx_new = start_idx + str.len();
-        let neg = end_idx > end_idx_new;
-        let end_diff = usize::abs_diff(end_idx_new, end_idx);
-        tree.tok_range[index].end = end_idx_new;
-        eprintln!(
-            "replacing `{}` with `{}`",
-            std::str::from_utf8(&tree.contents[range.clone()]).unwrap(),
-            &str,
+        let target_content_range = tree.tok_range[target_index].clone();
+        tree.tok_range[target_index].end = target_content_range.start + source_contents.len();
+        tree.contents.splice(
+            target_content_range.clone(),
+            source_contents.as_bytes().into_iter().cloned(),
         );
-        tree.contents
-            .splice(range, str.as_bytes().into_iter().cloned());
-        if neg {
-            // PERF: only update parent containers
-            for i in 0..index {
-                let range = &mut tree.tok_range[i];
-                if range.end > end_idx {
-                    range.end -= end_diff;
-                }
-            }
-            for i in index + 1..tree.tok_range.len() {
-                let range = &mut tree.tok_range[i];
-                range.start -= end_diff;
-                range.end -= end_diff;
-            }
-        } else {
-            for i in 0..index {
-                let range = &mut tree.tok_range[i];
-                if range.end > end_idx {
-                    range.end += end_diff;
-                }
-            }
-            for i in index + 1..tree.tok_range.len() {
-                let range = &mut tree.tok_range[i];
-                range.start += end_diff;
-                range.end += end_diff;
-            }
-        }
-    } else {
-        if matches!(tree.tok_type[index], TokenType::Array | TokenType::Object) {
-            todo!("replacing arrays and objects");
-        }
-        let mut sub_tree = parse(&str).expect("sub_tree valid json");
-        let sub_tree_len = sub_tree.next_index();
+        update_token_ranges(
+            &mut tree.tok_range,
+            target_content_range,
+            target_index..target_index + 1,
+            source_contents.len(),
+        );
+    } else if source_is_container && /* TODO: remove -> */ !target_is_container {
+        let mut source_tree = parse(&source_contents).expect("sub_tree valid json");
+        let offset_content = tree.tok_range[target_index].start;
+        let offset_token = target_index;
 
-        let offset_content = tree.tok_range[index].start;
-        let offset_tok = index;
+        let target_replacement_range = target_index..target_index + 1;
 
-        for tok_next in &mut sub_tree.tok_next {
+        let source_insertion_range = target_index..target_index + source_tree.next_index();
+
+        let target_content_range = tree.tok_range[target_index].clone();
+
+        for tok_next in &mut source_tree.tok_next {
             if *tok_next != 0 {
-                *tok_next += offset_tok as u32;
+                *tok_next += offset_token as u32;
             }
         }
-        for range in &mut sub_tree.tok_range {
+        for range in &mut source_tree.tok_range {
             range.start += offset_content;
             range.end += offset_content;
         }
-        for child_range in &mut sub_tree.tok_children {
+        for child_range in &mut source_tree.tok_children {
             if child_range.start == 0 && child_range.end == 0 {
                 continue;
             }
-            child_range.start += offset_tok;
-            child_range.end += offset_tok;
+            child_range.start += offset_token;
+            child_range.end += offset_token;
         }
-        for comment in &mut sub_tree.comments {
+        for comment in &mut source_tree.comments {
             comment.start += offset_content;
             comment.end += offset_content;
         }
-        let range = tree.tok_range[index].clone();
-        tree.comments.append(&mut sub_tree.comments);
+        tree.comments.append(&mut source_tree.comments);
         tree.comments.sort_by_key(|r| (r.start, r.end));
         tree.tok_children
-            .splice(index..index + 1, sub_tree.tok_children);
-        tree.tok_type.splice(index..index + 1, sub_tree.tok_type);
-        tree.tok_range.splice(index..index + 1, sub_tree.tok_range);
-        tree.tok_meta.splice(index..index + 1, sub_tree.tok_meta);
-        let tok_next_prev = tree.tok_next[index];
-        tree.tok_next.splice(index..index + 1, sub_tree.tok_next);
-        tree.contents.splice(range.clone(), sub_tree.contents);
+            .splice(target_replacement_range.clone(), source_tree.tok_children);
+        tree.tok_type
+            .splice(target_replacement_range.clone(), source_tree.tok_type);
+        tree.tok_range
+            .splice(target_replacement_range.clone(), source_tree.tok_range);
+        tree.tok_meta
+            .splice(target_replacement_range.clone(), source_tree.tok_meta);
+        let tok_next_prev = tree.tok_next[target_index];
+        tree.tok_next
+            .splice(target_replacement_range.clone(), source_tree.tok_next);
+        tree.contents
+            .splice(target_content_range.clone(), source_tree.contents);
         if tok_next_prev != 0 {
-            tree.tok_next[index] = tok_next_prev + sub_tree_len as u32;
+            tree.tok_next[target_index] = tok_next_prev;
         }
 
-        let insertion_start = index;
-        let insertion_end = index + sub_tree_len;
-
-        for i in 0..insertion_start {
+        for i in 0..source_insertion_range.start {
             let tok_next = &mut tree.tok_next[i];
             // fixme: assumes prev_len was 1, once replacing containers will need to do adjusted length
-            if *tok_next > insertion_start as u32 && *tok_next < insertion_end as u32 {
-                *tok_next += insertion_start as u32;
+            if *tok_next > source_insertion_range.start as u32
+                && *tok_next < source_insertion_range.end as u32
+            {
+                *tok_next += source_insertion_range.start as u32;
             }
         }
 
-        let start_idx = range.start;
-        let end_idx = range.end;
-        let end_idx_new = start_idx + str.len();
-        let neg = end_idx > end_idx_new;
-        let end_diff = usize::abs_diff(end_idx_new, end_idx);
-        if neg {
-            // PERF: only update parent containers
-            for i in 0..insertion_start {
-                let range = &mut tree.tok_range[i];
-                if range.end > end_idx {
-                    range.end -= end_diff;
-                }
-            }
-            for i in insertion_end..tree.tok_range.len() {
-                let range = &mut tree.tok_range[i];
-                range.start -= end_diff;
-                range.end -= end_diff;
-            }
-        } else {
-            for i in 0..insertion_start {
-                let range = &mut tree.tok_range[i];
-                if range.end > end_idx {
-                    range.end += end_diff;
-                }
-            }
-            for i in insertion_end..tree.tok_range.len() {
-                let range = &mut tree.tok_range[i];
-                range.start += end_diff;
-                range.end += end_diff;
-            }
-        }
+        update_token_ranges(
+            &mut tree.tok_range,
+            target_content_range,
+            source_insertion_range,
+            source_contents.len(),
+        );
     }
 
     return true;
+
+    fn update_token_ranges(
+        token_ranges: &mut [Range<usize>],
+        target_content_range: Range<usize>,
+        source_token_range: Range<usize>,
+        source_content_length: usize,
+    ) {
+        let end_diff = usize::abs_diff(
+            target_content_range.start + source_content_length,
+            target_content_range.end,
+        );
+
+        let end_diff_positive;
+        let end_diff_negative;
+        if target_content_range.end > target_content_range.start + source_content_length {
+            end_diff_positive = 0;
+            end_diff_negative = end_diff;
+        } else {
+            end_diff_positive = end_diff;
+            end_diff_negative = 0;
+        }
+
+        for range in &mut token_ranges[0..source_token_range.start] {
+            if range.end > target_content_range.end {
+                range.end -= end_diff_negative;
+                range.end += end_diff_positive;
+            }
+        }
+        for range in &mut token_ranges[source_token_range.end..] {
+            range.start -= end_diff_negative;
+            range.start += end_diff_positive;
+            range.end -= end_diff_negative;
+            range.end += end_diff_positive;
+        }
+    }
 }
 
 fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<usize> {
