@@ -7,6 +7,28 @@ use libfuzzer_sys::{
     fuzz_target,
 };
 
+#[derive(Debug)]
+struct UpdateDef {
+    contents: json_inc::JsonAst,
+    path: json_inc::Path,
+    target: json_inc::UpdateTarget,
+    value: serde_json::Value,
+}
+
+impl<'a> Arbitrary<'a> for UpdateDef {
+    fn arbitrary(u: &mut Unstructured) -> arbitrary::Result<Self> {
+        let contents = random_json(u)?;
+        let (path, target) = random_path(&contents, u)?;
+        let value = random_serde_json_value(u)?;
+        Ok(UpdateDef {
+            contents,
+            path,
+            target,
+            value,
+        })
+    }
+}
+
 fn random_json(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
     let value = random_serde_json_value(rng)?;
     let json_contents =
@@ -18,7 +40,7 @@ fn random_path(
     tree: &JsonAst,
     rng: &mut Unstructured,
 ) -> Result<(json_inc::Path, json_inc::UpdateTarget), arbitrary::Error> {
-    let index = rng.choose_index(tree.tok_types.len())?;
+    let index = rng.choose_index(tree.tok_type.len())?;
     use json_inc::{PathEntry, UpdateTarget};
     let mut path = vec![];
     let mut cur = 0;
@@ -26,7 +48,7 @@ fn random_path(
 
     'outer: while cur != index {
         assert!(tree.tok_children[cur].contains(&index));
-        match tree.tok_types[cur] {
+        match tree.tok_type[cur] {
             json_inc::TokenType::Array => {
                 for (i, val_idx) in json_inc::ArrayItemIter::new(tree, cur).enumerate() {
                     if val_idx == index {
@@ -134,22 +156,17 @@ fn random_serde_json_value_depth(
     }
 }
 
-fuzz_target!(|data: &[u8]| -> Corpus {
-    let mut rng = Unstructured::new(data);
+fuzz_target!(|data: UpdateDef| {
+    let UpdateDef {
+        contents,
+        path,
+        value,
+        target,
+    } = data;
 
-    let Ok(mut tree) = random_json(&mut rng) else {
-        return Corpus::Reject;
-    };
-    let Ok((path, target)) = random_path(&tree, &mut rng) else {
-        return Corpus::Reject;
-    };
-    let Ok(value) = random_serde_json_value(&mut rng) else {
-        return Corpus::Reject;
-    };
+    let mut tree = contents;
 
     if json_inc::update(&mut tree, &path, &value, target) {
         json_inc::assert_tree_valid(&tree);
     }
-
-    Corpus::Keep
 });

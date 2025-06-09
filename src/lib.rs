@@ -15,7 +15,6 @@ pub enum TokenType {
     Null,
 }
 
-#[derive(Debug)]
 pub struct JsonAst {
     pub contents: Vec<u8>,
     // todo: rename to tok_range
@@ -27,6 +26,32 @@ pub struct JsonAst {
     pub tok_meta: Vec<u32>,
     pub tok_next: Vec<u32>,
     pub comments: Vec<Range<usize>>,
+}
+
+impl std::fmt::Debug for JsonAst {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JsonAst")
+            .field("contents", &std::str::from_utf8(&self.contents))
+            .field(
+                "tok_range",
+                &self
+                    .tok_range
+                    .iter()
+                    .map(|range| {
+                        (
+                            range.clone(),
+                            std::str::from_utf8(&self.contents[range.clone()]),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .field("tok_type", &self.tok_type)
+            .field("tok_children", &self.tok_children)
+            .field("tok_meta", &self.tok_meta)
+            .field("tok_next", &self.tok_next)
+            .field("comments", &self.comments)
+            .finish()
+    }
 }
 
 impl JsonAst {
