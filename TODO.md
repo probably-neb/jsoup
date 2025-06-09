@@ -1,0 +1,13 @@
+- Replacing collections
+  - consolidate code paths for splicing and updating ranges
+- expore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
+- maintain formatting in updates
+- improve update efficiency by not stringifying then reparsing when inserting collection, convert `serde::Value` to tree directly (tied to maintaining formatting in updates)
+- Deeper serde interop
+  - `From<JsonAst> for serde_json::Value`
+  - `From<serde_json::Value> for JsonAst`
+- Error recovering parsing
+  - goal is to parse as much as possible while marking sub regions as errors
+  - return type becomes `(tree, List<Error>)` always
+- JSON5 parsing
+- ? maintaining comments in objects when replacing object with very similar object
