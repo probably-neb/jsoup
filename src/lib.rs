@@ -809,21 +809,7 @@ pub enum UpdateTarget {
     Value,
 }
 
-pub fn update(
-    tree: &mut JsonAst,
-    path: &Path,
-    source_value: &serde_json::Value,
-    target: UpdateTarget,
-) -> bool {
-    if target == UpdateTarget::Key && !source_value.is_string() {
-        return false;
-    }
-    // TODO: separate this into two functions, update_path and update_index
-    //       if combined with storing target in path, this removes the need for target entirely
-    let Some(target_index) = index_for_path(tree, path, target) else {
-        return false;
-    };
-
+fn update_index(tree: &mut JsonAst, target_index: usize, source_value: &serde_json::Value) -> bool {
     let target_token_type = tree.tok_type[target_index];
     let source_token_type = match source_value {
         serde_json::Value::Bool(_) => TokenType::Boolean,
@@ -1004,6 +990,24 @@ pub fn update(
     };
 
     return true;
+}
+
+pub fn update_path(
+    tree: &mut JsonAst,
+    path: &Path,
+    source_value: &serde_json::Value,
+    target: UpdateTarget,
+) -> bool {
+    if target == UpdateTarget::Key && !source_value.is_string() {
+        return false;
+    }
+    // TODO: separate this into two functions, update_path and update_index
+    //       if combined with storing target in path, this removes the need for target entirely
+    let Some(target_index) = index_for_path(tree, path, target) else {
+        return false;
+    };
+
+    return update_index(tree, target_index, source_value);
 }
 
 fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<usize> {
