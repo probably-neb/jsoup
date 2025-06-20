@@ -1092,147 +1092,94 @@ mod iter_tests {
 #[cfg(test)]
 mod update_tests {
     use super::*;
+    use serde_json::json;
+
+    fn check(target: &str, source: serde_json::Value, expected: &str) {
+        let span_begin = target.find('<').expect("span start defined");
+        let span_terminate = target.find('>').expect("span end defined");
+        let mut target_str = String::with_capacity(target.len());
+        target_str.push_str(&target[..span_begin]);
+        target_str.push_str(&target[span_begin + 1..span_terminate]);
+        target_str.push_str(&target[span_terminate + 1..]);
+
+        let target = target_str;
+        dbg!(&target);
+
+        let mut tree = parse(&target).expect("parse succeeded");
+        assert_tree_valid(&tree);
+
+        let index = tree
+            .tok_range
+            .iter()
+            .position(|range| range == &(span_begin..span_terminate - 1))
+            .expect("index found");
+
+        assert!(update_index(&mut tree, index, &source), "update failed");
+        assert_tree_valid(&tree);
+
+        let new_contents =
+            std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+        assert_eq!(new_contents, expected);
+    }
 
     #[test]
     fn obj_string_value_to_string() {
-        let json = r#"{ "key": "value" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("key"),
-            &serde_json::Value::String("new_value".to_string()),
-            UpdateTarget::Value,
-        ));
-
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"{ "key": "new_value" }"#;
-        assert_eq!(new_contents, new_contents_expected);
+        check(
+            r#"{ "key": <"value"> }"#,
+            json!("new_value"),
+            r#"{ "key": "new_value" }"#,
+        );
     }
 
     #[test]
     fn obj_string_value_to_float() {
-        let json = r#"{ "key": "value" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("key"),
-            &serde_json::Value::from(3.1459),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"{ "key": 3.1459 }"#;
-        assert_eq!(new_contents, new_contents_expected);
-    }
-
-    #[test]
-    fn obj_string_value_to_negative_float() {
-        let json = r#"{ "key": "value" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("key"),
-            &serde_json::Value::from(-3.1459),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"{ "key": -3.1459 }"#;
-        assert_eq!(new_contents, new_contents_expected);
+        check(
+            r#"{ "key": <"value"> }"#,
+            json!(3.1459),
+            r#"{ "key": 3.1459 }"#,
+        );
+        check(
+            r#"{ "key": <"value"> }"#,
+            json!(-3.1459),
+            r#"{ "key": -3.1459 }"#,
+        );
     }
 
     #[test]
     fn obj_string_value_to_array() {
-        let json = r#"{ "key": "value" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("key"),
-            &serde_json::Value::from([true]),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"{ "key": [true] }"#;
-        assert_eq!(new_contents, new_contents_expected);
+        check(
+            r#"{ "key": <"value"> }"#,
+            json!([true]),
+            r#"{ "key": [true] }"#,
+        );
     }
 
     #[test]
     fn obj_string_value_to_object() {
-        let json = r#"{ "key": "value", "key2": "value2" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("key"),
-            &serde_json::json!({
-                "sub_key": "sub_value"
-            }),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#;
-        assert_eq!(new_contents, new_contents_expected);
+        check(
+            r#"{ "key": <"value">, "key2": "value2" }"#,
+            json!({"sub_key": "sub_value"}),
+            r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#,
+        );
     }
 
     #[test]
     fn obj_replace_root() {
-        let json = r#"{ "key": "value", "key2": "value2" }"#;
-        let mut tree = parse(json).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str(""),
-            &serde_json::Value::from(true),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = r#"true"#;
-        assert_eq!(new_contents, new_contents_expected);
+        check(
+            r#"<{ "key": "value", "key2": "value2" }>"#,
+            json!(true),
+            "true",
+        );
     }
 
     #[test]
     fn arr_object_value_to_array() {
-        let json = serde_json::json!([
-            1,
-            {
-                "key": "value"
-            },
-            3
-        ]);
-        let mut tree = parse(&serde_json::to_string(&json).unwrap()).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("1"),
-            &serde_json::json!([2]),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = serde_json::to_string(&serde_json::json!([1, [2], 3])).unwrap();
-        assert_eq!(new_contents, new_contents_expected);
+        check(r#"[1, <{"key": "value"}>, 3]"#, json!([2]), "[1, [2], 3]");
     }
 
     #[test]
     fn arr_object_value_to_primitive() {
-        let json = serde_json::json!([
-            1,
-            {
-                "key": "value"
-            },
-            3
-        ]);
-        let mut tree = parse(&serde_json::to_string(&json).unwrap()).unwrap();
-        assert!(update(
-            &mut tree,
-            &Path::from_str("1"),
-            &serde_json::json!(2),
-            UpdateTarget::Value,
-        ));
-        assert_tree_valid(&tree);
-        let new_contents = std::str::from_utf8(&tree.contents).unwrap();
-        let new_contents_expected = serde_json::to_string(&serde_json::json!([1, 2, 3])).unwrap();
-        assert_eq!(new_contents, new_contents_expected);
+        check(r#"[1, <{"key": "value"}>, 3]"#, json!(2), "[1, 2, 3]");
     }
 }
