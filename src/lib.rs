@@ -1,3 +1,5 @@
+#![feature(iter_array_chunks)]
+
 pub use serde_json;
 use std::{fmt::Display, ops::Range};
 
@@ -1056,45 +1058,11 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
 }
 
 #[cfg(test)]
-mod iter_tests {
+mod test {
     use super::*;
+    use std::ops::Range;
 
-    #[test]
-    fn iter_object_key() {
-        let json = r#"{ "key": "value" }"#;
-        let tree = parse(json).unwrap();
-        let mut iter = ObjectItemIter::new(&tree, 0);
-        let (key, value) = iter.next().expect("iter valid");
-        assert_ne!(key, 0);
-        assert_ne!(value, 0);
-        assert!(iter.next().is_none());
-        assert_eq!(tree.value_at(key), "key");
-        assert_eq!(tree.value_at(value), "value");
-    }
-
-    #[test]
-    fn iter_object_keys() {
-        let json = r#"{ "key": "value", "key2": "value2" }"#;
-        let tree = parse(json).unwrap();
-        let mut iter = ObjectItemIter::new(&tree, 0);
-        let (key, value) = iter.next().expect("iter has one item");
-        assert_ne!(key, 0);
-        assert_ne!(value, 0);
-        let (key, value) = iter.next().expect("iter has two items");
-        assert_ne!(key, 0);
-        assert_ne!(value, 0);
-        assert_eq!(tree.value_at(key), "key2");
-        assert_eq!(tree.value_at(value), "value2");
-        assert!(iter.next().is_none(), "iter only has two items");
-    }
-}
-
-#[cfg(test)]
-mod update_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn check(target: &str, source: serde_json::Value, expected: &str) {
+    fn extract_delimited(target: &str) -> (String, Range<usize>) {
         let span_begin = target.find('<').expect("span start defined");
         let span_terminate = target.find('>').expect("span end defined");
         let mut target_str = String::with_capacity(target.len());
@@ -1102,84 +1070,208 @@ mod update_tests {
         target_str.push_str(&target[span_begin + 1..span_terminate]);
         target_str.push_str(&target[span_terminate + 1..]);
 
-        let target = target_str;
-        dbg!(&target);
-
-        let mut tree = parse(&target).expect("parse succeeded");
-        assert_tree_valid(&tree);
-
-        let index = tree
-            .tok_range
-            .iter()
-            .position(|range| range == &(span_begin..span_terminate - 1))
-            .expect("index found");
-
-        assert!(update_index(&mut tree, index, &source), "update failed");
-        assert_tree_valid(&tree);
-
-        let new_contents =
-            std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
-
-        assert_eq!(new_contents, expected);
+        return (target_str, span_begin..span_terminate - 1);
     }
 
-    #[test]
-    fn obj_string_value_to_string() {
-        check(
-            r#"{ "key": <"value"> }"#,
-            json!("new_value"),
-            r#"{ "key": "new_value" }"#,
-        );
+    mod iter {
+        use super::*;
+
+        fn check(target: &str) {
+            let (mut target, mut item_range) = extract_delimited(target);
+
+            let mut items = vec![];
+
+            while let Some(begin) = target.find('$') {
+                target.remove(begin);
+                let end = target.find('$').expect("item has # on either end");
+                target.remove(end);
+                item_range.end -= 2;
+                items.push(begin..end);
+            }
+
+            let tree = parse(&target).expect("parse succeeded");
+            assert_tree_valid(&tree);
+
+            let index = tree
+                .tok_range
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
+
+            let tok_type = tree.tok_type[index];
+            if tok_type == TokenType::Array {
+                let mut iter = ArrayItemIter::new(&tree, index);
+                for (i, item_range) in items.into_iter().enumerate() {
+                    let iter_item_index = iter.next().expect(&format!(
+                        "missing item [{i}]: `{}`",
+                        tree.value_for_char_range(&item_range)
+                    ));
+
+                    assert_eq!(
+                        item_range,
+                        tree.tok_range[iter_item_index],
+                        "item mismatch, expected:\n{}\nfound:\n{}\n",
+                        tree.value_for_char_range(&item_range),
+                        tree.value_at(iter_item_index)
+                    );
+                }
+                let last = iter.next();
+                match last {
+                    None => {}
+                    Some(index) => {
+                        panic!("found extra item in array iter:\n{}", tree.value_at(index));
+                    }
+                }
+            } else if tok_type == TokenType::Object {
+                let mut iter = ObjectItemIter::new(&tree, index);
+                assert_eq!(
+                    items.len() % 2,
+                    0,
+                    "odd number of expected items for object: {}",
+                    items.len()
+                );
+                for (i, [item_key_range, item_val_range]) in
+                    items.into_iter().array_chunks().enumerate()
+                {
+                    let (iter_key_index, iter_val_index) = iter.next().expect(&format!(
+                        "missing item key [{i}]: `{}`",
+                        tree.value_for_char_range(&item_key_range)
+                    ));
+
+                    assert_eq!(
+                        item_key_range,
+                        tree.tok_range[iter_key_index],
+                        "item key mismatch, expected:\n{}\nfound:\n{}\n",
+                        tree.value_for_char_range(&item_key_range),
+                        tree.value_at(iter_key_index)
+                    );
+
+                    assert_eq!(
+                        item_val_range,
+                        tree.tok_range[iter_val_index],
+                        "item value mismatch, expected:\n{}\nfound:\n{}\n",
+                        tree.value_for_char_range(&item_val_range),
+                        tree.value_at(iter_val_index)
+                    );
+                }
+                let last = iter.next();
+                match last {
+                    None => {}
+                    Some((key_index, val_index)) => {
+                        panic!(
+                            "found extra item in array iter:\n{}: {}",
+                            tree.value_at(key_index),
+                            tree.value_at(val_index)
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn object() {
+            check(r#"<{ $"key"$: $"value"$ }>"#);
+            check(r#"<{}>"#);
+            check(r#"<{ $"key"$: $"value"$, $"key2"$: $"value2"$ }>"#);
+            check(r#"{"parent": true, "child": <{ $"key"$: $"value"$, $"key2"$: $"value2"$ }>}"#);
+            check(r#"{"parent": true, "child": <{}>}"#);
+            check(r#"[<{}>]"#);
+            check(r#"[1, 2, 3, 4, 5, <{$"a"$: $1$, $"b"$: $2$ }>, 6, 7, 8]"#);
+            // todo! llm generate more tests
+        }
+
+        #[test]
+        fn array() {
+            check(r#"<[]>"#);
+            check(r#"<[$1$]>"#);
+            check(r#"<[${}$, ${}$,     ${}$]>"#);
+            // todo! llm generate more tests
+        }
     }
 
-    #[test]
-    fn obj_string_value_to_float() {
-        check(
-            r#"{ "key": <"value"> }"#,
-            json!(3.1459),
-            r#"{ "key": 3.1459 }"#,
-        );
-        check(
-            r#"{ "key": <"value"> }"#,
-            json!(-3.1459),
-            r#"{ "key": -3.1459 }"#,
-        );
-    }
+    mod update {
+        use super::*;
+        use serde_json::json;
 
-    #[test]
-    fn obj_string_value_to_array() {
-        check(
-            r#"{ "key": <"value"> }"#,
-            json!([true]),
-            r#"{ "key": [true] }"#,
-        );
-    }
+        fn check(target: &str, source: serde_json::Value, expected: &str) {
+            let (target, item_range) = extract_delimited(target);
 
-    #[test]
-    fn obj_string_value_to_object() {
-        check(
-            r#"{ "key": <"value">, "key2": "value2" }"#,
-            json!({"sub_key": "sub_value"}),
-            r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#,
-        );
-    }
+            let mut tree = parse(&target).expect("parse succeeded");
+            assert_tree_valid(&tree);
 
-    #[test]
-    fn obj_replace_root() {
-        check(
-            r#"<{ "key": "value", "key2": "value2" }>"#,
-            json!(true),
-            "true",
-        );
-    }
+            let index = tree
+                .tok_range
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
 
-    #[test]
-    fn arr_object_value_to_array() {
-        check(r#"[1, <{"key": "value"}>, 3]"#, json!([2]), "[1, [2], 3]");
-    }
+            assert!(update_index(&mut tree, index, &source), "update failed");
+            assert_tree_valid(&tree);
 
-    #[test]
-    fn arr_object_value_to_primitive() {
-        check(r#"[1, <{"key": "value"}>, 3]"#, json!(2), "[1, 2, 3]");
+            let new_contents =
+                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+            assert_eq!(new_contents, expected);
+        }
+
+        #[test]
+        fn obj_string_value_to_string() {
+            check(
+                r#"{ "key": <"value"> }"#,
+                json!("new_value"),
+                r#"{ "key": "new_value" }"#,
+            );
+        }
+
+        #[test]
+        fn obj_string_value_to_float() {
+            check(
+                r#"{ "key": <"value"> }"#,
+                json!(3.1459),
+                r#"{ "key": 3.1459 }"#,
+            );
+            check(
+                r#"{ "key": <"value"> }"#,
+                json!(-3.1459),
+                r#"{ "key": -3.1459 }"#,
+            );
+        }
+
+        #[test]
+        fn obj_string_value_to_array() {
+            check(
+                r#"{ "key": <"value"> }"#,
+                json!([true]),
+                r#"{ "key": [true] }"#,
+            );
+        }
+
+        #[test]
+        fn obj_string_value_to_object() {
+            check(
+                r#"{ "key": <"value">, "key2": "value2" }"#,
+                json!({"sub_key": "sub_value"}),
+                r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#,
+            );
+        }
+
+        #[test]
+        fn obj_replace_root() {
+            check(
+                r#"<{ "key": "value", "key2": "value2" }>"#,
+                json!(true),
+                "true",
+            );
+        }
+
+        #[test]
+        fn arr_object_value_to_array() {
+            check(r#"[1, <{"key": "value"}>, 3]"#, json!([2]), "[1, [2], 3]");
+        }
+
+        #[test]
+        fn arr_object_value_to_primitive() {
+            check(r#"[1, <{"key": "value"}>, 3]"#, json!(2), "[1, 2, 3]");
+        }
     }
 }
