@@ -811,7 +811,7 @@ pub enum ReplaceTarget {
     Value,
 }
 
-fn replace_index(
+pub fn replace_index(
     tree: &mut JsonAst,
     target_index: usize,
     source_value: &serde_json::Value,

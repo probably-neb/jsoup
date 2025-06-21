@@ -1,6 +1,6 @@
 #![no_main]
 
-use common::{random_json, random_path, random_serde_json_value};
+use common::{random_json, random_serde_json_value, random_value_index};
 use json_inc::serde_json;
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
@@ -10,20 +10,18 @@ use libfuzzer_sys::{
 #[derive(Debug)]
 struct ReplaceDef {
     contents: json_inc::JsonAst,
-    path: json_inc::Path,
-    target: json_inc::ReplaceTarget,
+    index: usize,
     value: serde_json::Value,
 }
 
 impl<'a> Arbitrary<'a> for ReplaceDef {
-    fn arbitrary(u: &mut Unstructured) -> arbitrary::Result<Self> {
-        let contents = random_json(u)?;
-        let (path, target) = random_path(&contents, u)?;
-        let value = random_serde_json_value(u)?;
+    fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
+        let contents = random_json(rng)?;
+        let value = random_serde_json_value(rng)?;
+        let index = random_value_index(&contents, rng)?;
         Ok(ReplaceDef {
             contents,
-            path,
-            target,
+            index,
             value,
         })
     }
@@ -32,14 +30,13 @@ impl<'a> Arbitrary<'a> for ReplaceDef {
 fuzz_target!(|data: ReplaceDef| {
     let ReplaceDef {
         contents,
-        path,
+        index,
         value,
-        target,
     } = data;
 
     let mut tree = contents;
 
-    if json_inc::replace_path(&mut tree, &path, &value, target) {
+    if json_inc::replace_index(&mut tree, index, &value) {
         json_inc::assert_tree_valid(&tree);
     }
 });

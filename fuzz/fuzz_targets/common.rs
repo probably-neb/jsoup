@@ -8,11 +8,18 @@ pub fn random_json(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> 
     return json_inc::parse(&json_contents).map_err(|_| arbitrary::Error::IncorrectFormat);
 }
 
+pub fn random_value_index(
+    tree: &JsonAst,
+    rng: &mut Unstructured,
+) -> Result<usize, arbitrary::Error> {
+    return rng.choose_index(tree.tok_type.len());
+}
+
 pub fn random_path(
     tree: &JsonAst,
     rng: &mut Unstructured,
 ) -> Result<(json_inc::Path, json_inc::ReplaceTarget), arbitrary::Error> {
-    let index = rng.choose_index(tree.tok_type.len())?;
+    let index = random_value_index(tree, rng)?;
     use json_inc::{PathEntry, ReplaceTarget};
     let mut path = vec![];
     let mut cur = 0;
