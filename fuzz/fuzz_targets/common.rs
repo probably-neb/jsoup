@@ -1,11 +1,11 @@
-use json_inc::*;
+use jsoup::*;
 use libfuzzer_sys::arbitrary::{self, Unstructured};
 
 pub fn random_json(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
     let value = random_serde_json_value(rng)?;
     let json_contents =
         serde_json::to_string(&value).map_err(|_| arbitrary::Error::IncorrectFormat)?;
-    return json_inc::parse(&json_contents).map_err(|_| arbitrary::Error::IncorrectFormat);
+    return jsoup::parse(&json_contents).map_err(|_| arbitrary::Error::IncorrectFormat);
 }
 
 pub fn random_value_index(
@@ -18,9 +18,9 @@ pub fn random_value_index(
 pub fn random_path(
     tree: &JsonAst,
     rng: &mut Unstructured,
-) -> Result<(json_inc::Path, json_inc::ReplaceTarget), arbitrary::Error> {
+) -> Result<(jsoup::Path, jsoup::ReplaceTarget), arbitrary::Error> {
     let index = random_value_index(tree, rng)?;
-    use json_inc::{PathEntry, ReplaceTarget};
+    use jsoup::{PathEntry, ReplaceTarget};
     let mut path = vec![];
     let mut cur = 0;
     let mut target = ReplaceTarget::Value;
@@ -28,8 +28,8 @@ pub fn random_path(
     'outer: while cur != index {
         assert!(tree.tok_desc[cur].contains(&index));
         match tree.tok_kind[cur] {
-            json_inc::Token::Array => {
-                for (i, val_idx) in json_inc::ArrayItemIter::new(tree, cur).enumerate() {
+            jsoup::Token::Array => {
+                for (i, val_idx) in jsoup::ArrayItemIter::new(tree, cur).enumerate() {
                     if val_idx == index {
                         path.push(PathEntry::Idx(i));
                         break 'outer;
@@ -41,8 +41,8 @@ pub fn random_path(
                 }
                 unreachable!();
             }
-            json_inc::Token::Object => {
-                for (key_idx, val_idx) in json_inc::ObjectItemIter::new(tree, cur) {
+            jsoup::Token::Object => {
+                for (key_idx, val_idx) in jsoup::ObjectItemIter::new(tree, cur) {
                     if key_idx == index {
                         path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
                         target = ReplaceTarget::Key;
@@ -64,7 +64,7 @@ pub fn random_path(
         }
     }
 
-    return Ok((json_inc::Path(path), target));
+    return Ok((jsoup::Path(path), target));
 }
 
 pub fn random_serde_json_value(

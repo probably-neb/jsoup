@@ -1,5 +1,5 @@
 [package]
-name = "json_inc-fuzz"
+name = "jsoup-fuzz"
 publish = false
 edition = "2024"
 
@@ -9,7 +9,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.json_inc]
+[dependencies.jsoup]
 path = ".."
 
 [lib]

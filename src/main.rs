@@ -14,8 +14,8 @@ const JSON_SMOL: &'static str = r#"
 } /* 9 */
 "#;
 
-fn main() -> Result<(), json_inc::ParseError> {
-    let tree = json_inc::parse(JSON_KEYMAP)?;
+fn main() -> Result<(), jsoup::ParseError> {
+    let tree = jsoup::parse(JSON_KEYMAP)?;
     for (index, ((kind, range), children)) in tree
         .tok_kind
         .iter()

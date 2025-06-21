@@ -1,7 +1,7 @@
 #![no_main]
 
 use common::{random_json, random_serde_json_value, random_value_index};
-use json_inc::serde_json;
+use jsoup::serde_json;
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
     fuzz_target,
@@ -9,7 +9,7 @@ use libfuzzer_sys::{
 
 #[derive(Debug)]
 struct ReplaceDef {
-    contents: json_inc::JsonAst,
+    contents: jsoup::JsonAst,
     index: usize,
     value: serde_json::Value,
 }
@@ -38,9 +38,9 @@ fuzz_target!(|data: ReplaceDef| {
 
     let mut tree = contents;
 
-    let did_replace = json_inc::replace_index(&mut tree, index, &value);
+    let did_replace = jsoup::replace_index(&mut tree, index, &value);
     // should never make a valid tree invalid
-    json_inc::assert_tree_valid(&tree);
+    jsoup::assert_tree_valid(&tree);
     if !did_replace {
         // contents should not have changed if replace failed
         assert_eq!(

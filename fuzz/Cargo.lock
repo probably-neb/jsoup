@@ -60,17 +60,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "json_inc"
+name = "jsoup"
 version = "0.0.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
-name = "json_inc-fuzz"
+name = "jsoup-fuzz"
 version = "0.0.0"
 dependencies = [
- "json_inc",
+ "jsoup",
  "libfuzzer-sys",
 ]
 
