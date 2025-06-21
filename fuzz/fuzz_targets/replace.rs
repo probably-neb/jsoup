@@ -34,9 +34,19 @@ fuzz_target!(|data: ReplaceDef| {
         value,
     } = data;
 
+    let contents_hash = contents.hash_default();
+
     let mut tree = contents;
 
-    if json_inc::replace_index(&mut tree, index, &value) {
-        json_inc::assert_tree_valid(&tree);
+    let did_replace = json_inc::replace_index(&mut tree, index, &value);
+    // should never make a valid tree invalid
+    json_inc::assert_tree_valid(&tree);
+    if !did_replace {
+        // contents should not have changed if replace failed
+        assert_eq!(
+            contents_hash,
+            tree.hash_default(),
+            "tree modified during update even though update failed"
+        );
     }
 });

@@ -1,13 +1,13 @@
 #![feature(iter_array_chunks)]
 
 pub use serde_json;
-use std::{fmt::Display, ops::Range};
+use std::{fmt::Display, hash::Hasher, ops::Range};
 
 const NUM_NEGATIVE: u32 = 1 << 0;
 const NUM_FLOAT: u32 = 1 << 1;
 const EMPTY_RANGE: Range<usize> = 0..0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TokenType {
     Array,
     Object,
@@ -17,6 +17,7 @@ pub enum TokenType {
     Null,
 }
 
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct JsonAst {
     pub contents: Vec<u8>,
     // todo: rename to tok_range
@@ -82,6 +83,13 @@ impl JsonAst {
         assert_eq!(self.tok_range.len(), self.tok_children.len());
         assert_eq!(self.tok_range.len(), self.tok_meta.len());
         assert_eq!(self.tok_range.len(), self.tok_next.len());
+    }
+
+    pub fn hash_default(&self) -> u64 {
+        use std::hash::{DefaultHasher, Hash as _};
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
