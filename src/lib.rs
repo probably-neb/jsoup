@@ -834,23 +834,28 @@ pub fn replace_index(
         serde_json::Value::Array(_) => TokenType::Array,
     };
 
-    let Ok(source_contents) = serde_json::to_string(source_value) else {
-        // todo! error here?
-        return false;
-    };
-
     let target_is_container =
         target_token_type == TokenType::Object || target_token_type == TokenType::Array;
     let source_is_container =
         source_token_type == TokenType::Object || source_token_type == TokenType::Array;
+    let target_is_obj_key =
+        target_token_type == TokenType::String && tree.tok_children[target_index].len() > 0;
+
+    // if replacing key, make sure replacement is string as well
+    if target_is_obj_key && source_token_type != TokenType::String {
+        return false;
+    }
+
+    let Ok(source_contents) = serde_json::to_string(source_value) else {
+        // todo! error here?
+        return false;
+    };
 
     let target_replacement_range;
     let source_insertion_range;
     let target_content_range;
 
     if !source_is_container {
-        let target_is_obj_key =
-            target_token_type == TokenType::String && tree.tok_children[target_index].len() > 0;
         target_replacement_range = tree.tok_children[target_index].clone();
 
         source_insertion_range = target_index..target_index + 1;
