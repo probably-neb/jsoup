@@ -806,12 +806,16 @@ pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum UpdateTarget {
+pub enum ReplaceTarget {
     Key,
     Value,
 }
 
-fn update_index(tree: &mut JsonAst, target_index: usize, source_value: &serde_json::Value) -> bool {
+fn replace_index(
+    tree: &mut JsonAst,
+    target_index: usize,
+    source_value: &serde_json::Value,
+) -> bool {
     let target_token_type = tree.tok_type[target_index];
     let source_token_type = match source_value {
         serde_json::Value::Bool(_) => TokenType::Boolean,
@@ -994,25 +998,25 @@ fn update_index(tree: &mut JsonAst, target_index: usize, source_value: &serde_js
     return true;
 }
 
-pub fn update_path(
+pub fn replace_path(
     tree: &mut JsonAst,
     path: &Path,
     source_value: &serde_json::Value,
-    target: UpdateTarget,
+    target: ReplaceTarget,
 ) -> bool {
-    if target == UpdateTarget::Key && !source_value.is_string() {
+    if target == ReplaceTarget::Key && !source_value.is_string() {
         return false;
     }
-    // TODO: separate this into two functions, update_path and update_index
+    // TODO: separate this into two functions, replace_path and replace_index
     //       if combined with storing target in path, this removes the need for target entirely
     let Some(target_index) = index_for_path(tree, path, target) else {
         return false;
     };
 
-    return update_index(tree, target_index, source_value);
+    return replace_index(tree, target_index, source_value);
 }
 
-fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<usize> {
+fn index_for_path(tree: &JsonAst, path: &Path, target: ReplaceTarget) -> Option<usize> {
     let mut index = 0;
     let mut value_index = 0;
 
@@ -1048,7 +1052,7 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: UpdateTarget) -> Option<u
         }
     }
 
-    if target == UpdateTarget::Value
+    if target == ReplaceTarget::Value
         && tree.tok_type[index] == TokenType::String
         && value_index != 0
     {
@@ -1189,7 +1193,7 @@ mod test {
         }
     }
 
-    mod update {
+    mod replace {
         use super::*;
         use serde_json::json;
 
@@ -1205,7 +1209,7 @@ mod test {
                 .position(|range| range == &item_range)
                 .expect("index found");
 
-            assert!(update_index(&mut tree, index, &source), "update failed");
+            assert!(replace_index(&mut tree, index, &source), "replace failed");
             assert_tree_valid(&tree);
 
             let new_contents =

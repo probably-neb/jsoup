@@ -2,25 +2,24 @@
 
 use json_inc::{JsonAst, serde_json};
 use libfuzzer_sys::{
-    Corpus,
     arbitrary::{self, Arbitrary, Unstructured},
     fuzz_target,
 };
 
 #[derive(Debug)]
-struct UpdateDef {
+struct ReplaceDef {
     contents: json_inc::JsonAst,
     path: json_inc::Path,
-    target: json_inc::UpdateTarget,
+    target: json_inc::ReplaceTarget,
     value: serde_json::Value,
 }
 
-impl<'a> Arbitrary<'a> for UpdateDef {
+impl<'a> Arbitrary<'a> for ReplaceDef {
     fn arbitrary(u: &mut Unstructured) -> arbitrary::Result<Self> {
         let contents = random_json(u)?;
         let (path, target) = random_path(&contents, u)?;
         let value = random_serde_json_value(u)?;
-        Ok(UpdateDef {
+        Ok(ReplaceDef {
             contents,
             path,
             target,
@@ -39,12 +38,12 @@ fn random_json(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
 fn random_path(
     tree: &JsonAst,
     rng: &mut Unstructured,
-) -> Result<(json_inc::Path, json_inc::UpdateTarget), arbitrary::Error> {
+) -> Result<(json_inc::Path, json_inc::ReplaceTarget), arbitrary::Error> {
     let index = rng.choose_index(tree.tok_type.len())?;
-    use json_inc::{PathEntry, UpdateTarget};
+    use json_inc::{PathEntry, ReplaceTarget};
     let mut path = vec![];
     let mut cur = 0;
-    let mut target: UpdateTarget = UpdateTarget::Value;
+    let mut target = ReplaceTarget::Value;
 
     'outer: while cur != index {
         assert!(tree.tok_children[cur].contains(&index));
@@ -66,12 +65,12 @@ fn random_path(
                 for (key_idx, val_idx) in json_inc::ObjectItemIter::new(tree, cur) {
                     if key_idx == index {
                         path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
-                        target = UpdateTarget::Key;
+                        target = ReplaceTarget::Key;
                         break 'outer;
                     }
                     if val_idx == index {
                         path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
-                        target = UpdateTarget::Value;
+                        target = ReplaceTarget::Value;
                         break 'outer;
                     }
                     if tree.tok_children[val_idx].contains(&index) {
@@ -100,7 +99,7 @@ fn random_serde_json_value_depth(
     const MAX_DEPTH: usize = 4;
 
     // Limit choices based on depth to prevent infinite recursion
-    let type_choice = if depth >= MAX_DEPTH {
+    let type_choice: u8 = if depth >= MAX_DEPTH {
         rng.int_in_range(0..=3)? // Only simple types
     } else {
         rng.int_in_range(0..=5)? // All types
@@ -110,8 +109,7 @@ fn random_serde_json_value_depth(
         0 => Ok(serde_json::Value::Null),
         1 => Ok(serde_json::Value::Bool(rng.arbitrary()?)),
         2 => {
-            // Use i32 for simplicity and convert to Number
-            let kind = rng.int_in_range(0..=2)?;
+            let kind: u32 = rng.int_in_range(0..=2)?;
             Ok(match kind {
                 0 => serde_json::Value::from(rng.arbitrary::<u64>()?),
                 1 => serde_json::Value::from(rng.arbitrary::<i64>()?),
@@ -156,8 +154,8 @@ fn random_serde_json_value_depth(
     }
 }
 
-fuzz_target!(|data: UpdateDef| {
-    let UpdateDef {
+fuzz_target!(|data: ReplaceDef| {
+    let ReplaceDef {
         contents,
         path,
         value,
@@ -166,7 +164,7 @@ fuzz_target!(|data: UpdateDef| {
 
     let mut tree = contents;
 
-    if json_inc::update(&mut tree, &path, &value, target) {
+    if json_inc::replace_path(&mut tree, &path, &value, target) {
         json_inc::assert_tree_valid(&tree);
     }
 });

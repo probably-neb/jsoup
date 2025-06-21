@@ -20,8 +20,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "update"
-path = "fuzz_targets/update.rs"
+name = "replace"
+path = "fuzz_targets/replace.rs"
 test = false
 doc = false
 bench = false
