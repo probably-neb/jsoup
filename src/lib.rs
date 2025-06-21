@@ -659,9 +659,13 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
     let mut found_count = 0;
     let mut key_index = tree.tok_desc[i].start;
     while key_index != 0 {
-        assert_eq!(tree.tok_kind[key_index], Token::String);
-        assert_eq!(tree.tok_meta[key_index], 0);
-        assert_eq!(tree.tok_desc[key_index].len(), 1);
+        assert_eq!(
+            Token::String,
+            tree.tok_kind[key_index],
+            "key of object should be string",
+        );
+        assert_eq!(0, tree.tok_meta[key_index]);
+        assert_eq!(1, tree.tok_desc[key_index].len());
         key_index = tree.tok_next[key_index] as usize;
         found_count += 1;
     }
@@ -946,7 +950,7 @@ pub fn replace_index(
         }
     }
 
-    // update tok_next
+    // update tok_next and tok_desc
     if target_replacement_range.len() > 0 {
         let source_insertion_range = source_insertion_range.clone();
         let tok_diff = u32::abs_diff(
@@ -965,21 +969,37 @@ pub fn replace_index(
             tok_diff_positive = tok_diff;
         }
 
-        for tok_next in &mut (&mut tree.tok_next)[0..=source_insertion_range.start] {
+        for tok_next in &mut tree.tok_next[0..=source_insertion_range.start] {
             if *tok_next >= target_replacement_range.end as u32 {
                 *tok_next += tok_diff_positive;
                 *tok_next -= tok_diff_negative;
             }
         }
-        for tok_next in &mut (&mut tree.tok_next)[source_insertion_range.end..] {
+        for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
             if *tok_next > target_replacement_range.end as u32 {
                 *tok_next += tok_diff_positive;
                 *tok_next -= tok_diff_negative;
             }
         }
+        for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
+            if tok_desc.start >= target_replacement_range.end {
+                tok_desc.start += tok_diff_positive as usize;
+                tok_desc.start -= tok_diff_negative as usize;
+                tok_desc.end += tok_diff_positive as usize;
+                tok_desc.end -= tok_diff_negative as usize;
+            }
+        }
+        for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
+            if tok_desc.start >= target_replacement_range.end {
+                tok_desc.start += tok_diff_positive as usize;
+                tok_desc.start -= tok_diff_negative as usize;
+                tok_desc.end += tok_diff_positive as usize;
+                tok_desc.end -= tok_diff_negative as usize;
+            }
+        }
     }
 
-    // update tok_range
+    // update tok_span
     {
         let end_diff = usize::abs_diff(
             target_content_range.start + source_contents.len(),
@@ -1279,13 +1299,26 @@ mod test {
         }
 
         #[test]
-        fn arr_object_value_to_array() {
-            check(r#"[1, <{"key": "value"}>, 3]"#, json!([2]), "[1, [2], 3]");
+        fn arr_value() {
+            check(
+                r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
+                json!([2]),
+                r#"[1, [2], 3, 4, 5]"#,
+            );
+            check(
+                r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
+                json!(2),
+                r#"[1, 2, 3, 4, 5]"#,
+            );
         }
 
         #[test]
-        fn arr_object_value_to_primitive() {
-            check(r#"[1, <{"key": "value"}>, 3]"#, json!(2), "[1, 2, 3]");
+        fn tmp() {
+            check(
+                r#"[<null>,{"": null},null]"#,
+                json!([{}]),
+                r#"[[{}],{"": null},null]"#,
+            );
         }
     }
 }
