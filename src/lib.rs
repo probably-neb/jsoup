@@ -849,6 +849,8 @@ pub fn replace_index(
     let target_content_range;
 
     if !source_is_container {
+        let target_is_obj_key =
+            target_token_type == TokenType::String && tree.tok_children[target_index].len() > 0;
         target_replacement_range = tree.tok_children[target_index].clone();
 
         source_insertion_range = target_index..target_index + 1;
@@ -862,7 +864,9 @@ pub fn replace_index(
 
         tree.tok_type[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
-        tree.tok_children[target_index] = EMPTY_RANGE;
+        if !target_is_obj_key {
+            tree.tok_children[target_index] = EMPTY_RANGE;
+        }
 
         tree.tok_range[target_index].end = target_content_range.start + source_contents.len();
         tree.contents.splice(
