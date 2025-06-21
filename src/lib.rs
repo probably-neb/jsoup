@@ -885,7 +885,7 @@ pub fn replace_index(
             let mut meta = 0;
             if n.is_f64() {
                 meta |= NUM_FLOAT;
-                if n.as_f64().unwrap() < 0.0 {
+                if n.as_f64().unwrap().is_sign_negative() {
                     meta |= NUM_NEGATIVE;
                 }
             } else if n.is_i64() && !n.is_u64() {
@@ -981,6 +981,7 @@ pub fn replace_index(
                 *tok_next -= tok_diff_negative;
             }
         }
+
         for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
             if tok_desc.start >= target_replacement_range.end {
                 tok_desc.start += tok_diff_positive as usize;
@@ -1249,39 +1250,23 @@ mod test {
         }
 
         #[test]
-        fn obj_string_value_to_string() {
+        fn obj_value() {
             check(
                 r#"{ "key": <"value"> }"#,
                 json!("new_value"),
                 r#"{ "key": "new_value" }"#,
             );
-        }
-
-        #[test]
-        fn obj_string_value_to_float() {
             check(
                 r#"{ "key": <"value"> }"#,
                 json!(3.1459),
                 r#"{ "key": 3.1459 }"#,
             );
-            check(
-                r#"{ "key": <"value"> }"#,
-                json!(-3.1459),
-                r#"{ "key": -3.1459 }"#,
-            );
-        }
-
-        #[test]
-        fn obj_string_value_to_array() {
+            check(r#"{ "key": <"value"> }"#, json!(-0.0), r#"{ "key": -0.0 }"#);
             check(
                 r#"{ "key": <"value"> }"#,
                 json!([true]),
                 r#"{ "key": [true] }"#,
             );
-        }
-
-        #[test]
-        fn obj_string_value_to_object() {
             check(
                 r#"{ "key": <"value">, "key2": "value2" }"#,
                 json!({"sub_key": "sub_value"}),
@@ -1310,10 +1295,6 @@ mod test {
                 json!(2),
                 r#"[1, 2, 3, 4, 5]"#,
             );
-        }
-
-        #[test]
-        fn tmp() {
             check(
                 r#"[<null>,{"": null},null]"#,
                 json!([{}]),
