@@ -12,7 +12,7 @@ pub fn random_value_index(
     tree: &JsonAst,
     rng: &mut Unstructured,
 ) -> Result<usize, arbitrary::Error> {
-    return rng.choose_index(tree.tok_type.len());
+    return rng.choose_index(tree.tok_kind.len());
 }
 
 pub fn random_path(
@@ -26,22 +26,22 @@ pub fn random_path(
     let mut target = ReplaceTarget::Value;
 
     'outer: while cur != index {
-        assert!(tree.tok_children[cur].contains(&index));
-        match tree.tok_type[cur] {
-            json_inc::TokenType::Array => {
+        assert!(tree.tok_desc[cur].contains(&index));
+        match tree.tok_kind[cur] {
+            json_inc::Token::Array => {
                 for (i, val_idx) in json_inc::ArrayItemIter::new(tree, cur).enumerate() {
                     if val_idx == index {
                         path.push(PathEntry::Idx(i));
                         break 'outer;
                     }
-                    if tree.tok_children[val_idx].contains(&index) {
+                    if tree.tok_desc[val_idx].contains(&index) {
                         cur = val_idx;
                         continue 'outer;
                     }
                 }
                 unreachable!();
             }
-            json_inc::TokenType::Object => {
+            json_inc::Token::Object => {
                 for (key_idx, val_idx) in json_inc::ObjectItemIter::new(tree, cur) {
                     if key_idx == index {
                         path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
@@ -53,7 +53,7 @@ pub fn random_path(
                         target = ReplaceTarget::Value;
                         break 'outer;
                     }
-                    if tree.tok_children[val_idx].contains(&index) {
+                    if tree.tok_desc[val_idx].contains(&index) {
                         path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
                         continue 'outer;
                     }

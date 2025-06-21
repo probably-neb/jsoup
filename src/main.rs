@@ -17,10 +17,10 @@ const JSON_SMOL: &'static str = r#"
 fn main() -> Result<(), json_inc::ParseError> {
     let tree = json_inc::parse(JSON_KEYMAP)?;
     for (index, ((kind, range), children)) in tree
-        .tok_type
+        .tok_kind
         .iter()
-        .zip(tree.tok_range.iter())
-        .zip(tree.tok_children.iter())
+        .zip(tree.tok_span.iter())
+        .zip(tree.tok_desc.iter())
         .enumerate()
     {
         println!(
