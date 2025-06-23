@@ -7,16 +7,6 @@ const NUM_NEGATIVE: u32 = 1 << 0;
 const NUM_FLOAT: u32 = 1 << 1;
 const EMPTY_RANGE: Range<usize> = 0..0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Token {
-    Array,
-    Object,
-    String,
-    Number,
-    Boolean,
-    Null,
-}
-
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct JsonAst {
     pub contents: Vec<u8>,
@@ -89,6 +79,34 @@ impl JsonAst {
         self.hash(&mut hasher);
         hasher.finish()
     }
+
+    pub fn is_object_key(&self, target_index: usize) -> bool {
+        self.tok_kind[target_index] == Token::String || self.tok_desc[target_index].len() == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Token {
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    Null,
+}
+
+impl Token {
+    pub fn from_value(value: &serde_json::Value) -> Self {
+        use serde_json::Value;
+        match value {
+            Value::Array(_) => Token::Array,
+            Value::Object(_) => Token::Object,
+            Value::String(_) => Token::String,
+            Value::Number(_) => Token::Number,
+            Value::Bool(_) => Token::Boolean,
+            Value::Null => Token::Null,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -151,6 +169,7 @@ impl Path {
 }
 
 pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
+    // todo! don't clone if not necessary
     let contents = input.as_bytes().to_vec();
     let mut tree = JsonAst {
         contents,
@@ -678,8 +697,17 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
 fn assert_array_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_span[i];
     assert!(range.len() >= 2);
-    assert_eq!(tree.contents[range.start], b'[');
-    assert_eq!(tree.contents[range.end - 1], b']');
+    assert_eq!(
+        tree.contents[range.start], b'[',
+        "expected '[' at start of array, found '{}'",
+        tree.contents[range.start] as char
+    );
+    assert_eq!(
+        tree.contents[range.end - 1],
+        b']',
+        "expected ']' at end of array, found '{}'",
+        tree.contents[range.end - 1] as char
+    );
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
     let expected_count = tree.tok_meta[i];
@@ -817,6 +845,29 @@ pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
     return &contents_str[adjusted_range];
 }
 
+pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
+    match value {
+        serde_json::Value::Null => 0,
+        serde_json::Value::Bool(_) => 0,
+        serde_json::Value::Number(n) => {
+            let mut meta = 0;
+            if n.is_f64() {
+                meta |= NUM_FLOAT;
+                if n.as_f64().unwrap().is_sign_negative() {
+                    meta |= NUM_NEGATIVE;
+                }
+            } else if n.is_i64() && !n.is_u64() {
+                meta |= NUM_NEGATIVE;
+                meta &= !NUM_FLOAT;
+            }
+            meta
+        }
+        serde_json::Value::String(_) => 0,
+        serde_json::Value::Array(arr) => arr.len() as u32,
+        serde_json::Value::Object(obj) => obj.len() as u32,
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ReplaceTarget {
     Key,
@@ -829,14 +880,7 @@ pub fn replace_index(
     source_value: &serde_json::Value,
 ) -> bool {
     let target_token_type = tree.tok_kind[target_index];
-    let source_token_type = match source_value {
-        serde_json::Value::Bool(_) => Token::Boolean,
-        serde_json::Value::Null => Token::Null,
-        serde_json::Value::Number(_) => Token::Number,
-        serde_json::Value::String(_) => Token::String,
-        serde_json::Value::Object(_) => Token::Object,
-        serde_json::Value::Array(_) => Token::Array,
-    };
+    let source_token_type = Token::from_value(source_value);
 
     let target_is_container =
         target_token_type == Token::Object || target_token_type == Token::Array;
@@ -883,19 +927,7 @@ pub fn replace_index(
             source_contents.as_bytes().into_iter().cloned(),
         );
 
-        if let serde_json::Value::Number(n) = source_value {
-            let mut meta = 0;
-            if n.is_f64() {
-                meta |= NUM_FLOAT;
-                if n.as_f64().unwrap().is_sign_negative() {
-                    meta |= NUM_NEGATIVE;
-                }
-            } else if n.is_i64() && !n.is_u64() {
-                meta |= NUM_NEGATIVE;
-                meta &= !NUM_FLOAT;
-            }
-            tree.tok_meta[target_index] = meta;
-        }
+        tree.tok_meta[target_index] = tok_meta_from_value(source_value);
     } else {
         let mut source_tree = parse(&source_contents).expect("sub_tree valid json");
         let offset_content = tree.tok_span[target_index].start;
@@ -1115,6 +1147,22 @@ pub enum InsertionValue<'a> {
     Obj((&'a str, serde_json::Value)),
 }
 
+#[derive(Debug)]
+pub enum InsertionError {
+    InvalidTarget,
+    CannotInsertKeyValueIntoArray,
+    FailedToSerializeValue,
+    TargetIsNotItem,
+}
+
+impl std::fmt::Display for InsertionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for InsertionError {}
+
 /// `target_index` should be index of item in container (element in array or key in object) based on `method`
 /// See documentation of ![`InsertionMethod`] for details
 pub fn insert_index(
@@ -1122,7 +1170,7 @@ pub fn insert_index(
     source_value: InsertionValue<'_>,
     method: InsertionMethod,
     target_index: usize,
-) -> bool {
+) -> Result<(), InsertionError> {
     if matches!(source_value, InsertionValue::Obj(_)) {
         todo!();
     }
@@ -1134,22 +1182,23 @@ pub fn insert_index(
     if is_target_container == is_method_relative_to_item {
         // if target is container, and method is relative to item,
         // or vice versa, the api has been broken
-        return false;
+        return Err(InsertionError::InvalidTarget);
     }
 
-    if is_method_relative_to_item && tree.tok_next[target_index] == 0 {
+    // todo! if allowing for non-container root trees, this will break
+    // todo! this will break for object values, need tok_prev
+    if is_method_relative_to_item && target_index == 0 {
         // if method relative to item, and target is not item, api has been broken
-        return false;
+        return Err(InsertionError::TargetIsNotItem);
     }
 
-    let is_target_obj_key =
-        tree.tok_kind[target_index] == Token::String || tree.tok_desc[target_index].len() == 0;
+    let is_target_obj_key = tree.is_object_key(target_index);
     if is_method_relative_to_item
         && matches!(source_value, InsertionValue::Obj(_))
         && !is_target_obj_key
     {
-        // cannot insert key, value pair into object
-        return false;
+        // cannot insert key, value pair into array
+        return Err(InsertionError::CannotInsertKeyValueIntoArray);
     }
 
     if !is_method_relative_to_item {
@@ -1160,37 +1209,52 @@ pub fn insert_index(
     let source_insertion_range;
     let target_content_range;
 
+    let source_token_kind;
+    let source_token_meta;
+
     let source_contents = match source_value {
         InsertionValue::Arr(value) => {
-            let Ok(mut source_contents) = serde_json::to_string(&value) else {
+            source_token_kind = Token::from_value(&value);
+            source_token_meta = tok_meta_from_value(&value);
+            let Ok(source_contents) = serde_json::to_string(&value) else {
                 // todo! error
-                return false;
+                return Err(InsertionError::FailedToSerializeValue);
             };
-            source_contents.push_str(", ");
             source_contents
         }
         InsertionValue::Obj(_) => todo!(),
     };
 
+    let source_is_container =
+        source_token_kind == Token::Object || source_token_kind == Token::Array;
+
+    let mut source_contents_len = source_contents.len();
+
+    let mut source_tree = if source_is_container {
+        parse(&source_contents).expect("sub_tree valid json")
+    } else {
+        JsonAst {
+            contents: source_contents.into_bytes(),
+            tok_span: vec![0..source_contents_len],
+            tok_next: vec![0],
+            tok_desc: vec![EMPTY_RANGE],
+            tok_kind: vec![source_token_kind],
+            tok_meta: vec![source_token_meta],
+            comments: vec![],
+        }
+    };
+
     match method {
         InsertionMethod::After => {
-            let prev_index = 'prev: {
-                for (index, &tok_next) in tree.tok_next[0..target_index].iter().enumerate().rev() {
-                    if tok_next as usize == target_index {
-                        break 'prev index;
-                    }
-                }
-                todo!()
-            };
+            let prefix = *b", ";
 
-            let mut source_tree = parse(&source_contents).expect("sub_tree valid json");
+            source_contents_len += prefix.len();
             let offset_content = tree.tok_span[target_index].start;
             let offset_token = target_index;
 
-            target_replacement_range =
-                target_index..usize::max(target_index + 1, tree.tok_desc[target_index].end);
+            target_replacement_range = target_index..target_index;
             source_insertion_range = target_index..target_index + source_tree.next_index();
-            target_content_range = tree.tok_span[target_index].clone();
+            target_content_range = tree.tok_span[target_index].end..tree.tok_span[target_index].end;
 
             for tok_next in &mut source_tree.tok_next {
                 if *tok_next != 0 {
@@ -1227,8 +1291,10 @@ pub fn insert_index(
                 .splice(target_replacement_range.clone(), source_tree.tok_meta);
             tree.tok_next
                 .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.contents
-                .splice(target_content_range.clone(), source_tree.contents);
+            tree.contents.splice(
+                target_content_range.clone(),
+                prefix.into_iter().chain(source_tree.contents.into_iter()),
+            );
 
             if tok_next_prev != 0 {
                 tree.tok_next[target_index] = tok_next_prev;
@@ -1292,13 +1358,13 @@ pub fn insert_index(
     // update tok_span
     {
         let end_diff = usize::abs_diff(
-            target_content_range.start + source_contents.len(),
+            target_content_range.start + source_contents_len,
             target_content_range.end,
         );
 
         let end_diff_positive;
         let end_diff_negative;
-        if target_content_range.end > target_content_range.start + source_contents.len() {
+        if target_content_range.end > target_content_range.start + source_contents_len {
             end_diff_positive = 0;
             end_diff_negative = end_diff;
         } else {
@@ -1320,12 +1386,14 @@ pub fn insert_index(
         }
     };
 
-    true
+    // todo! return index of new item
+    Ok(())
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use serde_json::json;
     use std::ops::Range;
 
     fn extract_delimited(target: &str) -> (String, Range<usize>) {
@@ -1457,7 +1525,6 @@ mod test {
 
     mod replace {
         use super::*;
-        use serde_json::json;
 
         fn check(target: &str, source: serde_json::Value, expected: &str) {
             let (target, item_range) = extract_delimited(target);
@@ -1531,6 +1598,44 @@ mod test {
                 json!([{}]),
                 r#"[[{}],{"": null},null]"#,
             );
+        }
+    }
+
+    mod insert {
+        use super::*;
+        use InsertionMethod::*;
+        use InsertionValue::*;
+
+        fn check(
+            target: &str,
+            insertion_method: InsertionMethod,
+            source: InsertionValue,
+            expected: &str,
+        ) {
+            let (target, item_range) = extract_delimited(target);
+
+            let mut tree = parse(&target).expect("parse succeeded");
+            assert_tree_valid(&tree);
+
+            let index = tree
+                .tok_span
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
+
+            insert_index(&mut tree, source, insertion_method, index).expect("insert failed");
+            assert_tree_valid(&tree);
+
+            let new_contents =
+                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+            assert_eq!(new_contents, expected);
+        }
+
+        #[test]
+        fn array() {
+            check(r#"[1, <2>, 4]"#, After, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
+            check(r#"[<1>]"#, After, Arr(json!(2)), r#"[1, 2]"#);
         }
     }
 }
