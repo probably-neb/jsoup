@@ -1,4 +1,5 @@
 #![feature(iter_array_chunks)]
+#![feature(unsigned_signed_diff)]
 
 pub use serde_json;
 use std::{fmt::Display, hash::Hasher, ops::Range};
@@ -1357,32 +1358,20 @@ pub fn insert_index(
 
     // update tok_span
     {
-        let end_diff = usize::abs_diff(
+        let end_diff = usize::checked_signed_diff(
             target_content_range.start + source_contents_len,
             target_content_range.end,
-        );
-
-        let end_diff_positive;
-        let end_diff_negative;
-        if target_content_range.end > target_content_range.start + source_contents_len {
-            end_diff_positive = 0;
-            end_diff_negative = end_diff;
-        } else {
-            end_diff_positive = end_diff;
-            end_diff_negative = 0;
-        }
+        )
+        .expect("No more than u32::MAX elements");
 
         for range in &mut (&mut tree.tok_span)[0..source_insertion_range.start] {
             if range.end > target_content_range.end {
-                range.end -= end_diff_negative;
-                range.end += end_diff_positive;
+                range.end = usize::checked_add_signed(range.end, end_diff).unwrap();
             }
         }
         for range in &mut (&mut tree.tok_span)[source_insertion_range.end..] {
-            range.start -= end_diff_negative;
-            range.start += end_diff_positive;
-            range.end -= end_diff_negative;
-            range.end += end_diff_positive;
+            range.start = usize::checked_add_signed(range.start, end_diff).unwrap();
+            range.end = usize::checked_add_signed(range.end, end_diff).unwrap();
         }
     };
 
