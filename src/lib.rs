@@ -1148,9 +1148,8 @@ pub enum InsertionValue<'a> {
     Obj((&'a str, serde_json::Value)),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum InsertionError {
-    InvalidTarget,
     CannotInsertKeyValueIntoArray,
     FailedToSerializeValue,
     TargetIsNotItem,
@@ -1183,13 +1182,6 @@ pub fn insert_index(
     if is_target_container == is_method_relative_to_item {
         // if target is container, and method is relative to item,
         // or vice versa, the api has been broken
-        return Err(InsertionError::InvalidTarget);
-    }
-
-    // todo! if allowing for non-container root trees, this will break
-    // todo! this will break for object values, need tok_prev
-    if is_method_relative_to_item && target_index == 0 {
-        // if method relative to item, and target is not item, api has been broken
         return Err(InsertionError::TargetIsNotItem);
     }
 
@@ -1592,6 +1584,7 @@ mod test {
 
     mod insert {
         use super::*;
+        use InsertionError::*;
         use InsertionMethod::*;
         use InsertionValue::*;
 
@@ -1621,10 +1614,45 @@ mod test {
             assert_eq!(new_contents, expected);
         }
 
+        fn check_fail(
+            target: &str,
+            insertion_method: InsertionMethod,
+            source: InsertionValue,
+            expected_err: InsertionError,
+        ) {
+            let (target, item_range) = extract_delimited(target);
+
+            let mut tree = parse(&target).expect("parse succeeded");
+            assert_tree_valid(&tree);
+
+            let index = tree
+                .tok_span
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
+
+            let err = insert_index(&mut tree, source, insertion_method, index)
+                .expect_err("insert failed");
+            assert_eq!(err, expected_err);
+            assert_tree_valid(&tree);
+
+            let new_contents =
+                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+            assert_eq!(new_contents, &target);
+        }
+
         #[test]
         fn array() {
             check(r#"[1, <2>, 4]"#, After, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
             check(r#"[<1>]"#, After, Arr(json!(2)), r#"[1, 2]"#);
+            check_fail(
+                r#"<[]>"#,
+                After,
+                Arr(json!(2)),
+                InsertionError::TargetIsNotItem,
+            );
+            check(r#"[1, 2, <4>]"#, Before, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
         }
     }
 }
