@@ -25,7 +25,7 @@ impl std::fmt::Debug for JsonAst {
         f.debug_struct("JsonAst")
             .field("contents", &std::str::from_utf8(&self.contents))
             .field(
-                "tok_range",
+                "tok_span",
                 &self
                     .tok_span
                     .iter()
@@ -37,8 +37,8 @@ impl std::fmt::Debug for JsonAst {
                     })
                     .collect::<Vec<_>>(),
             )
-            .field("tok_type", &self.tok_kind)
-            .field("tok_children", &self.tok_desc)
+            .field("tok_kind", &self.tok_kind)
+            .field("tok_desc", &self.tok_desc)
             .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
             .field("comments", &self.comments)
@@ -706,8 +706,9 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
     assert_eq!(
         tree.contents[range.end - 1],
         b']',
-        "expected ']' at end of array, found '{}'",
-        tree.contents[range.end - 1] as char
+        "expected ']' at end of array, found '{}' `{}`",
+        tree.contents[range.end - 1] as char,
+        tree.value_at(i)
     );
     assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
 
@@ -715,12 +716,23 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
     let mut found_count = 0;
     let mut value_index = tree.tok_desc[i].start;
     while value_index != 0 {
-        value_index = tree.tok_next[value_index] as usize;
+        let next_value_index = tree.tok_next[value_index] as usize;
+        assert!(
+            value_index != next_value_index,
+            "value index should not be equal to next value index"
+        );
+        assert!(
+            value_index < next_value_index || next_value_index == 0,
+            "value index should be less than next value index"
+        );
+        value_index = next_value_index;
         found_count += 1;
     }
     assert_eq!(
-        expected_count, found_count,
-        "array has correct number of values"
+        expected_count,
+        found_count,
+        "array `{}` has correct number of values",
+        tree.value_at(i)
     );
 }
 
@@ -740,9 +752,10 @@ pub fn assert_tree_valid(tree: &JsonAst) {
             Token::Null => {}
         }
     }
+    // todo! assert reparsing contents succeeds, and that the parsed tree is identical to the original tree
 
-    for i in 0..tree.tok_span.len() {
-        for j in 0..tree.tok_span.len() {
+    for i in 0..tree.next_index() {
+        for j in 0..tree.next_index() {
             if i == j {
                 continue;
             }
@@ -750,6 +763,18 @@ pub fn assert_tree_valid(tree: &JsonAst) {
                 tree.tok_span[i], tree.tok_span[j],
                 "tok range {i} and {j} are the same"
             );
+            if tree.tok_next[i] != 0 {
+                assert_ne!(
+                    tree.tok_next[i], tree.tok_next[j],
+                    "tok next {i} and {j} are the same"
+                );
+            }
+            if tree.tok_desc[i] != EMPTY_RANGE {
+                assert_ne!(
+                    tree.tok_desc[i], tree.tok_desc[j],
+                    "tok desc {i} and {j} are the same"
+                );
+            }
         }
     }
 }
@@ -792,7 +817,7 @@ pub struct ArrayItemIter<'a> {
 impl<'a> ArrayItemIter<'a> {
     pub fn new(tree: &'a JsonAst, array_index: usize) -> Self {
         assert_eq!(tree.tok_kind[array_index], Token::Array);
-        let next_index = tree.tok_desc[array_index].start;
+        let next_index = arr_first_item_index(tree, array_index);
         ArrayItemIter { tree, next_index }
     }
 }
@@ -810,6 +835,23 @@ impl<'a> Iterator for ArrayItemIter<'a> {
 
         Some(value_index)
     }
+}
+
+/// Will be zero if array is empty
+fn arr_first_item_index(tree: &JsonAst, array_index: usize) -> usize {
+    assert_eq!(tree.tok_kind[array_index], Token::Array);
+    let next_index = tree.tok_desc[array_index].start;
+    next_index
+}
+
+/// Will be zero if array is empty
+fn arr_last_item_index(tree: &JsonAst, array_index: usize) -> usize {
+    assert_eq!(tree.tok_kind[array_index], Token::Array);
+    let mut item_index = arr_first_item_index(tree, array_index);
+    while tree.tok_next[item_index] != 0 {
+        item_index = tree.tok_next[item_index] as usize;
+    }
+    item_index
 }
 
 /// Adjusts a byte range to ensure it falls on UTF-8 character boundaries
@@ -1177,13 +1219,16 @@ pub fn insert_index(
 
     let is_method_relative_to_item =
         matches!(method, InsertionMethod::After | InsertionMethod::Before);
-    let is_target_container = matches!(tree.tok_kind[target_index], Token::Array | Token::Object);
 
-    if is_target_container == is_method_relative_to_item {
+    let target_container_index = if is_method_relative_to_item {
         // if target is container, and method is relative to item,
         // or vice versa, the api has been broken
-        return Err(InsertionError::TargetIsNotItem);
-    }
+        item_container_index(tree, target_index).ok_or(InsertionError::TargetIsNotItem)? // todo! better error
+    } else {
+        target_index
+    };
+    let target_tok_kind = tree.tok_kind[target_index];
+    let is_target_container = matches!(target_tok_kind, Token::Array | Token::Object);
 
     let is_target_obj_key = tree.is_object_key(target_index);
     if is_method_relative_to_item
@@ -1194,14 +1239,6 @@ pub fn insert_index(
         return Err(InsertionError::CannotInsertKeyValueIntoArray);
     }
 
-    if !is_method_relative_to_item {
-        todo!()
-    }
-
-    let target_replacement_range;
-    let source_insertion_range;
-    let target_content_range;
-
     let source_token_kind;
     let source_token_meta;
 
@@ -1210,7 +1247,6 @@ pub fn insert_index(
             source_token_kind = Token::from_value(&value);
             source_token_meta = tok_meta_from_value(&value);
             let Ok(source_contents) = serde_json::to_string(&value) else {
-                // todo! error
                 return Err(InsertionError::FailedToSerializeValue);
             };
             source_contents
@@ -1237,17 +1273,255 @@ pub fn insert_index(
         }
     };
 
+    let is_target_container_empty =
+        is_target_container && tree.tok_desc[target_index] == EMPTY_RANGE;
+
+    let (method, target_index) = match method {
+        InsertionMethod::Before | InsertionMethod::After => (method, target_index),
+        InsertionMethod::Prepend => match is_target_container_empty {
+            true => (InsertionMethod::Prepend, target_index),
+            false => (
+                InsertionMethod::Before,
+                match target_tok_kind {
+                    Token::Array => arr_first_item_index(tree, target_index),
+                    Token::Object => todo!(),
+                    _ => unreachable!(),
+                },
+            ),
+        },
+        InsertionMethod::Append => match is_target_container_empty {
+            true => (InsertionMethod::Append, target_index),
+            false => (
+                InsertionMethod::After,
+                match target_tok_kind {
+                    Token::Array => arr_last_item_index(tree, target_index),
+                    Token::Object => todo!(),
+                    _ => unreachable!(),
+                },
+            ),
+        },
+    };
+
+    let target_replacement_range;
+    // let target_content_range;
+    let source_insertion_range;
+    let target_content_range;
+    let source_content_range;
+
+    let offset_content;
+    let content_slices;
+    let comma_space = *b", ";
+    let target_reference_index;
+
     match method {
         InsertionMethod::After => {
-            let prefix = *b", ";
+            let insertion_index = target_index + 1;
+            target_replacement_range = insertion_index..insertion_index;
+            target_content_range = tree.tok_span[target_index].end..tree.tok_span[target_index].end;
+            source_content_range = target_content_range.start
+                ..target_content_range.end + source_tree.contents.len() + comma_space.len();
+            offset_content = target_content_range.start + comma_space.len();
+            source_insertion_range = target_replacement_range.start
+                ..target_replacement_range.end + source_tree.next_index();
 
-            source_contents_len += prefix.len();
+            content_slices = [&comma_space, source_tree.contents.as_slice()];
+            target_reference_index = target_index;
+
+            tree.tok_kind
+                .splice(target_replacement_range.clone(), source_tree.tok_kind);
+            tree.tok_meta
+                .splice(target_replacement_range.clone(), source_tree.tok_meta);
+            tree.tok_next
+                .splice(target_replacement_range.clone(), source_tree.tok_next);
+            tree.tok_desc
+                .splice(target_replacement_range.clone(), source_tree.tok_desc);
+            tree.tok_span
+                .splice(target_replacement_range.clone(), source_tree.tok_span);
+            tree.contents.splice(
+                target_content_range.clone(),
+                content_slices.into_iter().flatten().copied(),
+            );
+
+            let diff_content = source_content_range.len();
+            let diff_token = source_insertion_range.len();
+
+            let tok_next_prev = tree.tok_next[target_reference_index];
+            if tok_next_prev != 0 {
+                tree.tok_next[source_insertion_range.start] =
+                    tok_next_prev + source_insertion_range.len() as u32;
+            }
+            tree.tok_next[target_reference_index] = source_insertion_range.start as u32;
+
+            for tok_next in &mut tree.tok_next[..source_insertion_range.start] {
+                if *tok_next > source_insertion_range.start as u32 {
+                    *tok_next += diff_token as u32;
+                }
+            }
+
+            for tok_next in
+                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
+            {
+                if *tok_next != 0 {
+                    *tok_next += source_insertion_range.start as u32;
+                }
+            }
+
+            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
+                if *tok_next != 0 {
+                    *tok_next += diff_token as u32
+                }
+            }
+            for tok_span in &mut tree.tok_span[..source_insertion_range.start] {
+                if tok_span.start > source_content_range.start {
+                    tok_span.start += diff_content;
+                }
+                if tok_span.end > source_content_range.start {
+                    tok_span.end += diff_content;
+                }
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
+                tok_span.start += offset_content;
+                tok_span.end += offset_content;
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
+                tok_span.start += diff_content;
+                tok_span.end += diff_content;
+            }
+            for tok_desc in &mut tree.tok_desc[..source_insertion_range.start] {
+                if tok_desc.start >= source_insertion_range.start {
+                    tok_desc.start += diff_token;
+                }
+                if tok_desc.end >= source_insertion_range.start {
+                    tok_desc.end += diff_token;
+                }
+            }
+
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
+                if *tok_desc != EMPTY_RANGE {
+                    tok_desc.start += source_insertion_range.start;
+                    tok_desc.end += source_insertion_range.start;
+                }
+            }
+
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
+                if tok_desc.start > source_insertion_range.start {
+                    tok_desc.start += diff_token;
+                }
+                if tok_desc.end > source_insertion_range.start {
+                    tok_desc.end += diff_token;
+                }
+            }
+        }
+        InsertionMethod::Before => {
+            let insertion_index = target_index;
+            target_replacement_range = insertion_index..insertion_index;
+            target_content_range =
+                tree.tok_span[target_index].start..tree.tok_span[target_index].start;
+            content_slices = [source_tree.contents.as_slice(), &comma_space];
+            offset_content = target_content_range.start;
+            source_insertion_range = target_replacement_range.start
+                ..target_replacement_range.end + source_tree.next_index();
+            source_content_range = target_content_range.start
+                ..target_content_range.end + source_tree.contents.len() + comma_space.len();
+            target_reference_index = target_index + 1;
+
+            tree.tok_kind
+                .splice(target_replacement_range.clone(), source_tree.tok_kind);
+            tree.tok_meta
+                .splice(target_replacement_range.clone(), source_tree.tok_meta);
+            tree.tok_next
+                .splice(target_replacement_range.clone(), source_tree.tok_next);
+            tree.tok_desc
+                .splice(target_replacement_range.clone(), source_tree.tok_desc);
+            tree.tok_span
+                .splice(target_replacement_range.clone(), source_tree.tok_span);
+            tree.contents.splice(
+                target_content_range.clone(),
+                content_slices.into_iter().flatten().copied(),
+            );
+
+            let diff_content = source_content_range.len();
+            let diff_token = source_insertion_range.len();
+
+            tree.tok_next[source_insertion_range.start] = target_reference_index as u32;
+
+            for tok_next in &mut tree.tok_next[..source_insertion_range.start] {
+                if *tok_next > source_insertion_range.start as u32 {
+                    *tok_next += diff_token as u32;
+                }
+            }
+
+            for tok_next in
+                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
+            {
+                if *tok_next != 0 {
+                    *tok_next += source_insertion_range.start as u32;
+                }
+            }
+
+            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
+                if *tok_next != 0 {
+                    *tok_next += diff_token as u32
+                }
+            }
+            for tok_span in &mut tree.tok_span[..source_insertion_range.start] {
+                if tok_span.start > source_content_range.start {
+                    tok_span.start += diff_content;
+                }
+                if tok_span.end > source_content_range.start {
+                    tok_span.end += diff_content;
+                }
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
+                tok_span.start += offset_content;
+                tok_span.end += offset_content;
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
+                tok_span.start += diff_content;
+                tok_span.end += diff_content;
+            }
+
+            for tok_desc in &mut tree.tok_desc[..source_insertion_range.start] {
+                if tok_desc.start > source_insertion_range.start {
+                    tok_desc.start += diff_token;
+                }
+                if tok_desc.end > source_insertion_range.start {
+                    tok_desc.end += diff_token;
+                }
+            }
+
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
+                if *tok_desc != EMPTY_RANGE {
+                    tok_desc.start += source_insertion_range.start;
+                    tok_desc.end += source_insertion_range.start;
+                }
+            }
+
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
+                if tok_desc.start > source_insertion_range.start {
+                    tok_desc.start += diff_token;
+                }
+                if tok_desc.end > source_insertion_range.start {
+                    tok_desc.end += diff_token;
+                }
+            }
+        }
+        // because of transformation above, this is actually just adding the first element
+        // to the container
+        InsertionMethod::Prepend | InsertionMethod::Append => {
+            todo!();
+
             let offset_content = tree.tok_span[target_index].start;
             let offset_token = target_index;
 
             target_replacement_range = target_index..target_index;
             source_insertion_range = target_index..target_index + source_tree.next_index();
-            target_content_range = tree.tok_span[target_index].end..tree.tok_span[target_index].end;
+            target_content_range =
+                tree.tok_span[target_index].start..tree.tok_span[target_index].start;
 
             for tok_next in &mut source_tree.tok_next {
                 if *tok_next != 0 {
@@ -1284,91 +1558,32 @@ pub fn insert_index(
                 .splice(target_replacement_range.clone(), source_tree.tok_meta);
             tree.tok_next
                 .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.contents.splice(
-                target_content_range.clone(),
-                prefix.into_iter().chain(source_tree.contents.into_iter()),
-            );
-
-            if tok_next_prev != 0 {
-                tree.tok_next[target_index] = tok_next_prev;
-            }
-        }
-        InsertionMethod::Before => todo!(),
-        InsertionMethod::Append => todo!(),
-        InsertionMethod::Prepend => todo!(),
-    };
-
-    // todo! extract following into function
-
-    // update tok_next and tok_desc
-    let source_insertion_range = source_insertion_range.clone();
-    let tok_diff = u32::abs_diff(
-        source_insertion_range.end as u32,
-        target_replacement_range.end as u32,
-    );
-
-    let tok_diff_positive;
-    let tok_diff_negative;
-
-    if source_insertion_range.end < target_replacement_range.end {
-        tok_diff_negative = tok_diff;
-        tok_diff_positive = 0;
-    } else {
-        tok_diff_negative = 0;
-        tok_diff_positive = tok_diff;
-    }
-
-    for tok_next in &mut tree.tok_next[0..=source_insertion_range.start] {
-        if *tok_next >= target_replacement_range.end as u32 {
-            *tok_next += tok_diff_positive;
-            *tok_next -= tok_diff_negative;
-        }
-    }
-    for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
-        if *tok_next > target_replacement_range.end as u32 {
-            *tok_next += tok_diff_positive;
-            *tok_next -= tok_diff_negative;
-        }
-    }
-
-    for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
-        if tok_desc.start >= target_replacement_range.end {
-            tok_desc.start += tok_diff_positive as usize;
-            tok_desc.start -= tok_diff_negative as usize;
-            tok_desc.end += tok_diff_positive as usize;
-            tok_desc.end -= tok_diff_negative as usize;
-        }
-    }
-    for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-        if tok_desc.start >= target_replacement_range.end {
-            tok_desc.start += tok_diff_positive as usize;
-            tok_desc.start -= tok_diff_negative as usize;
-            tok_desc.end += tok_diff_positive as usize;
-            tok_desc.end -= tok_diff_negative as usize;
-        }
-    }
-
-    // update tok_span
-    {
-        let end_diff = usize::checked_signed_diff(
-            target_content_range.start + source_contents_len,
-            target_content_range.end,
-        )
-        .expect("No more than u32::MAX elements");
-
-        for range in &mut (&mut tree.tok_span)[0..source_insertion_range.start] {
-            if range.end > target_content_range.end {
-                range.end = usize::checked_add_signed(range.end, end_diff).unwrap();
-            }
-        }
-        for range in &mut (&mut tree.tok_span)[source_insertion_range.end..] {
-            range.start = usize::checked_add_signed(range.start, end_diff).unwrap();
-            range.end = usize::checked_add_signed(range.end, end_diff).unwrap();
+            tree.contents
+                .splice(target_content_range.clone(), source_tree.contents);
         }
     };
+
+    tree.tok_meta[target_container_index] += 1;
 
     // todo! return index of new item
     Ok(())
+}
+
+fn item_container_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
+    let mut cur_index = item_index;
+    while cur_index > 0 {
+        if tree.tok_next[cur_index] as usize == item_index {
+            item_index = cur_index;
+        } else if tree.tok_desc[cur_index].start == item_index {
+            return Some(cur_index);
+        }
+        cur_index -= 1;
+    }
+    if tree.tok_desc[cur_index].start == item_index && item_index != 0 {
+        return Some(cur_index);
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -1377,6 +1592,7 @@ mod test {
     use serde_json::json;
     use std::ops::Range;
 
+    // todo! parameterize on delimiters
     fn extract_delimited(target: &str) -> (String, Range<usize>) {
         let span_begin = target.find('<').expect("span start defined");
         let span_terminate = target.find('>').expect("span end defined");
@@ -1386,6 +1602,41 @@ mod test {
         target_str.push_str(&target[span_terminate + 1..]);
 
         return (target_str, span_begin..span_terminate - 1);
+    }
+
+    #[test]
+    fn find_item_container_index() {
+        #[track_caller]
+        fn check(target: &str) {
+            let (mut target, mut container_range) = extract_delimited(target);
+
+            let item_begin = target.find('$').expect("item start delimiter present");
+            target.remove(item_begin);
+            let item_end = target.find('$').expect("item end delimiter present");
+            target.remove(item_end);
+            container_range.end -= 2;
+
+            let item_range = item_begin..item_end;
+            let tree = parse(&target).expect("parse succeeded");
+
+            assert_tree_valid(&tree);
+            let container_index = tree
+                .tok_span
+                .iter()
+                .position(|range| range == &container_range)
+                .expect("index found");
+            let item_index = tree
+                .tok_span
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
+            let index = item_container_index(&tree, item_index).expect("container index found");
+            assert_eq!(container_index, index);
+        }
+
+        check("<[$3$]>");
+        check("<[1,2,$3$,4,5]>");
+        check("[[[<[1,2,$3$,4,5]>]]]");
     }
 
     mod iter {
@@ -1584,10 +1835,10 @@ mod test {
 
     mod insert {
         use super::*;
-        use InsertionError::*;
         use InsertionMethod::*;
         use InsertionValue::*;
 
+        #[track_caller]
         fn check(
             target: &str,
             insertion_method: InsertionMethod,
@@ -1606,14 +1857,14 @@ mod test {
                 .expect("index found");
 
             insert_index(&mut tree, source, insertion_method, index).expect("insert failed");
-            assert_tree_valid(&tree);
+            // assert_tree_valid(&tree);
 
-            let new_contents =
-                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+            let expected_tree = parse(expected).expect("parse succeeded");
 
-            assert_eq!(new_contents, expected);
+            pretty_assertions::assert_eq!(tree, expected_tree, "tree = \n{:#?}", tree);
         }
 
+        // #[track_caller]
         fn check_fail(
             target: &str,
             insertion_method: InsertionMethod,
@@ -1652,7 +1903,19 @@ mod test {
                 Arr(json!(2)),
                 InsertionError::TargetIsNotItem,
             );
+            check(
+                r#"[<{"foo": "bar"}>]"#,
+                After,
+                Arr(json!({"baz": "qux"})),
+                r#"[{"foo": "bar"}, {"baz": "qux"}]"#,
+            );
             check(r#"[1, 2, <4>]"#, Before, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
+            check(r#"[<1>, 2, 3]"#, Before, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
+            check(r#"[<1>]"#, Before, Arr(json!(0)), r#"[0, 1]"#);
+            check(r#"[0, <2>, 3]"#, Before, Arr(json!(1)), r#"[0, 1, 2, 3]"#);
+            // check(r#"<[]>"#, Prepend, Arr(json!(0)), r#"[0]"#);
+            // check(r#"<[1, 2, 3]>"#, Prepend, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
+            // check(r#"<[1, 2, 3]>"#, Append, Arr(json!(4)), r#"[1, 2, 3, 4]"#);
         }
     }
 }
