@@ -82,7 +82,7 @@ impl JsonAst {
     }
 
     pub fn is_object_key(&self, target_index: usize) -> bool {
-        self.tok_kind[target_index] == Token::String || self.tok_desc[target_index].len() == 0
+        self.tok_kind[target_index] == Token::String && self.tok_desc[target_index].len() > 0
     }
 }
 
@@ -1192,7 +1192,7 @@ pub enum InsertionValue<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum InsertionError {
-    CannotInsertKeyValueIntoArray,
+    IncorrectContainerType,
     FailedToSerializeValue,
     TargetIsNotItem,
 }
@@ -1228,15 +1228,18 @@ pub fn insert_index(
         target_index
     };
     let target_tok_kind = tree.tok_kind[target_index];
+    // todo! remove, this is misleading when inserting after a container
     let is_target_container = matches!(target_tok_kind, Token::Array | Token::Object);
 
-    let is_target_obj_key = tree.is_object_key(target_index);
-    if is_method_relative_to_item
-        && matches!(source_value, InsertionValue::Obj(_))
-        && !is_target_obj_key
-    {
+    let is_value_obj_and_target_arr = matches!(source_value, InsertionValue::Obj(_))
+        && ((is_method_relative_to_item && !tree.is_object_key(target_index))
+            || (!is_method_relative_to_item && target_tok_kind == Token::Array));
+    let is_value_arr_and_target_obj = matches!(source_value, InsertionValue::Arr(_))
+        && ((is_method_relative_to_item && tree.is_object_key(target_index))
+            || (!is_method_relative_to_item && target_tok_kind == Token::Object));
+    if is_value_obj_and_target_arr || is_value_arr_and_target_obj {
         // cannot insert key, value pair into array
-        return Err(InsertionError::CannotInsertKeyValueIntoArray);
+        return Err(InsertionError::IncorrectContainerType);
     }
 
     let source_token_kind;
@@ -1972,6 +1975,16 @@ mod test {
                 Prepend,
                 Arr(json!({"foo": "bar"})),
                 r#"[[[{"foo":"bar"}], 1], 2]"#,
+            );
+        }
+
+        #[test]
+        fn object() {
+            check_fail(
+                r#"{<"foo">: "bar"}"#,
+                After,
+                Arr(json!({"baz": "qux"})),
+                InsertionError::IncorrectContainerType,
             );
         }
     }
