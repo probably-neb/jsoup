@@ -26,11 +26,15 @@
     * `Range<u32>`?
     * `beg` + `end` for same len
 - [ ] maintain formatting in updates
+  - [ ] `format_style_from` that takes an index, and returns a `FormatStyle`
+      * useful for limiting scope of CRUD ops, where args can be created with correct formatting before insertion
 - [ ] Add benchmarks
   - before unifying update logic
   - options
     * insert 1000 values into array
     * insert values into very deeply nested value
+- [ ] Builder API for simultaneous creation of formatted JSON as well as tree
+  - useful for replacement APIs
 - [ ] expore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
 - [ ] improve update efficiency
     * avoiding allocating new values as much as possible
@@ -39,6 +43,8 @@
 - [ ] Deeper serde interop
   - `From<JsonAst> for serde_json::Value`
   - `From<serde_json::Value> for JsonAst`
+  - can then simplify insert, replace, remove, etc to take trees instead
+  - if have `format_style_from` then these should take `FormatStyle`
 - [ ] Error recovering parsing
   - goal is to parse as much as possible while marking sub regions as errors
   - return type becomes `(tree, List<Error>)` always
