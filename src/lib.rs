@@ -1307,7 +1307,6 @@ pub fn insert_index(
             else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
-            dbg!(&source_contents);
             let mut source_tree = JsonAst {
                 tok_next: vec![0],
                 tok_desc: vec![1..1],
@@ -1601,7 +1600,6 @@ pub fn insert_index(
 
             let diff_content = source_content_range.len();
             let diff_token = source_insertion_range.len();
-            dbg!(&source_insertion_range);
 
             tree.tok_desc[target_index] = insertion_index..insertion_index;
             let mut container_index = Some(target_container_index);
