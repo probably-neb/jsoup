@@ -1213,10 +1213,6 @@ pub fn insert_index(
     method: InsertionMethod,
     target_index: usize,
 ) -> Result<(), InsertionError> {
-    if matches!(source_value, InsertionValue::Obj(_)) {
-        todo!();
-    }
-
     let is_method_relative_to_item =
         matches!(method, InsertionMethod::After | InsertionMethod::Before);
 
@@ -1234,45 +1230,75 @@ pub fn insert_index(
     let is_value_obj_and_target_arr = matches!(source_value, InsertionValue::Obj(_))
         && ((is_method_relative_to_item && !tree.is_object_key(target_index))
             || (!is_method_relative_to_item && target_tok_kind == Token::Array));
+
     let is_value_arr_and_target_obj = matches!(source_value, InsertionValue::Arr(_))
         && ((is_method_relative_to_item && tree.is_object_key(target_index))
             || (!is_method_relative_to_item && target_tok_kind == Token::Object));
+
     if is_value_obj_and_target_arr || is_value_arr_and_target_obj {
         // cannot insert key, value pair into array
         return Err(InsertionError::IncorrectContainerType);
     }
 
-    let source_token_kind;
-    let source_token_meta;
-
-    let source_contents = match source_value {
+    let source_tree = match source_value {
         InsertionValue::Arr(value) => {
-            source_token_kind = Token::from_value(&value);
-            source_token_meta = tok_meta_from_value(&value);
+            let source_token_kind = Token::from_value(&value);
+            let source_token_meta = tok_meta_from_value(&value);
             let Ok(source_contents) = serde_json::to_string(&value) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
-            source_contents
+
+            let source_is_container =
+                source_token_kind == Token::Object || source_token_kind == Token::Array;
+
+            let source_tree = if source_is_container {
+                parse(&source_contents).expect("sub_tree valid json")
+            } else {
+                JsonAst {
+                    tok_span: vec![0..source_contents.len()],
+                    tok_next: vec![0],
+                    tok_desc: vec![EMPTY_RANGE],
+                    tok_kind: vec![source_token_kind],
+                    tok_meta: vec![source_token_meta],
+                    comments: vec![],
+                    contents: source_contents.into_bytes(),
+                }
+            };
+            source_tree
         }
-        InsertionValue::Obj(_) => todo!(),
-    };
-
-    let source_is_container =
-        source_token_kind == Token::Object || source_token_kind == Token::Array;
-
-    let mut source_contents_len = source_contents.len();
-
-    let mut source_tree = if source_is_container {
-        parse(&source_contents).expect("sub_tree valid json")
-    } else {
-        JsonAst {
-            contents: source_contents.into_bytes(),
-            tok_span: vec![0..source_contents_len],
-            tok_next: vec![0],
-            tok_desc: vec![EMPTY_RANGE],
-            tok_kind: vec![source_token_kind],
-            tok_meta: vec![source_token_meta],
-            comments: vec![],
+        InsertionValue::Obj((key, value)) => {
+            let colon_space = ": ";
+            let key = key.to_string();
+            let key_len = key.len() + "\"\"".len();
+            let mut source_contents = String::with_capacity(
+                key_len + colon_space.len() + 64, /* perf: estimate value len better */
+            );
+            let Ok(()) = serde_json::to_writer(
+                unsafe { source_contents.as_mut_vec() },
+                &serde_json::Value::String(key),
+            ) else {
+                return Err(InsertionError::FailedToSerializeValue);
+            };
+            source_contents.push_str(colon_space);
+            let Ok(()) = serde_json::to_writer(unsafe { source_contents.as_mut_vec() }, &value)
+            else {
+                return Err(InsertionError::FailedToSerializeValue);
+            };
+            let mut source_tree = JsonAst {
+                tok_next: vec![0],
+                tok_desc: vec![1..1],
+                tok_kind: vec![Token::String],
+                tok_meta: vec![0],
+                tok_span: vec![0..key_len],
+                comments: vec![],
+                contents: source_contents.into_bytes(),
+            };
+            let mut cursor = key_len + colon_space.len();
+            let Ok(()) = parse_value(&mut source_tree, &mut cursor) else {
+                return Err(InsertionError::FailedToSerializeValue);
+            };
+            source_tree.tok_desc[0].end = cursor;
+            source_tree
         }
     };
 
@@ -1985,6 +2011,12 @@ mod test {
                 After,
                 Arr(json!({"baz": "qux"})),
                 InsertionError::IncorrectContainerType,
+            );
+            check(
+                r#"{<"foo">: "bar"}"#,
+                After,
+                Obj(("baz", json!("qux"))),
+                r#"{"foo": "bar", "baz": "qux"}"#,
             );
         }
     }
