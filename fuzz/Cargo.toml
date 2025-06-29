@@ -29,3 +29,10 @@ path = "fuzz_targets/replace.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "insert"
+path = "fuzz_targets/insert.rs"
+test = false
+doc = false
+bench = false

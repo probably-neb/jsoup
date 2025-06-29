@@ -3,8 +3,8 @@
 - [*] `insert`
   - [x] array values
   - [x] object keys
+  - [x] fuzz
   - [ ] unify index updates
-  - [ ] fuzz
 - [ ] Add error type for replace
 - [ ] `remove` values
 - [ ] use `usize::signed_diff` instead of `+ positive - negative`
