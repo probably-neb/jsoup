@@ -1315,7 +1315,7 @@ pub fn insert_index(
 
     match method {
         InsertionMethod::After => {
-            let insertion_index = target_index + 1;
+            let insertion_index = usize::max(tree.tok_desc[target_index].end, target_index + 1);
             target_replacement_range = insertion_index..insertion_index;
             target_content_range = tree.tok_span[target_index].end..tree.tok_span[target_index].end;
             source_content_range = target_content_range.start
@@ -1389,13 +1389,11 @@ pub fn insert_index(
                 tok_span.start += diff_content;
                 tok_span.end += diff_content;
             }
-            for tok_desc in &mut tree.tok_desc[..source_insertion_range.start] {
-                if tok_desc.start >= source_insertion_range.start {
-                    tok_desc.start += diff_token;
-                }
-                if tok_desc.end >= source_insertion_range.start {
-                    tok_desc.end += diff_token;
-                }
+
+            let mut container_index = Some(target_container_index);
+            while let Some(outer_container_index) = container_index {
+                tree.tok_desc[outer_container_index].end += diff_token;
+                container_index = item_container_index(tree, outer_container_index);
             }
 
             for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
@@ -1425,7 +1423,7 @@ pub fn insert_index(
                 ..target_replacement_range.end + source_tree.next_index();
             source_content_range = target_content_range.start
                 ..target_content_range.end + source_tree.contents.len() + comma_space.len();
-            target_reference_index = target_index + 1;
+            target_reference_index = source_insertion_range.end;
 
             tree.tok_kind
                 .splice(target_replacement_range.clone(), source_tree.tok_kind);
@@ -1861,7 +1859,7 @@ mod test {
 
             let expected_tree = parse(expected).expect("parse succeeded");
 
-            pretty_assertions::assert_eq!(tree, expected_tree, "tree = \n{:#?}", tree);
+            pretty_assertions::assert_eq!(tree, expected_tree);
         }
 
         // #[track_caller]
@@ -1904,11 +1902,24 @@ mod test {
                 InsertionError::TargetIsNotItem,
             );
             check(
-                r#"[<{"foo": "bar"}>]"#,
+                r#"[<{"foo":"bar"}>]"#,
                 After,
                 Arr(json!({"baz": "qux"})),
-                r#"[{"foo": "bar"}, {"baz": "qux"}]"#,
+                r#"[{"foo":"bar"}, {"baz":"qux"}]"#,
             );
+            check(
+                r#"[<{"foo":"bar"}>]"#,
+                Before,
+                Arr(json!({"baz": "qux"})),
+                r#"[{"baz":"qux"}, {"foo":"bar"}]"#,
+            );
+            check(
+                r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
+                Before,
+                Arr(json!([1, 2])),
+                r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#,
+            );
+
             check(r#"[1, 2, <4>]"#, Before, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
             check(r#"[<1>, 2, 3]"#, Before, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
             check(r#"[<1>]"#, Before, Arr(json!(0)), r#"[0, 1]"#);
