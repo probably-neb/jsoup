@@ -1,8 +1,13 @@
 - [x] Replacing collections
   - [x] consolidate code paths for splicing and updating ranges
+- [*] Insert object keys
+- [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
 - [ ] expore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
 - [ ] maintain formatting in updates
-- [ ] improve update efficiency by not stringifying then reparsing when inserting collection, convert `serde::Value` to tree directly (tied to maintaining formatting in updates)
+- [ ] improve update efficiency
+    * avoiding allocating new values as much as possible
+      * convert `serde::Value` to tree directly (tied to maintaining formatting in updates)
+    * JsonAstRef type with `&'tree []` types?
 - [ ] Improve container tok range
   - store last item index, and complete end of last item in tok_desc instead of start and end
   - start will always be index + 1, and storing both ends avoids:
@@ -14,7 +19,16 @@
     * last item index will be `tok_desc[container_index].last_item_index`
     * to check if container is empty, check if `last_item_index == 0`
     * when container is empty, `tok_desc[container_index].end_complete == container_index + 1` so removal does not require any additional logic
-
+- [?] Custom range type
+    * `offset_by(usize)`
+    * `impl Copy`
+    * `Range<u32>`?
+    * `beg` + `end` for same len
+- [ ] Add benchmarks
+  - before unifying update logic
+  - options
+    * insert 1000 values into array
+    * insert values into very deeply nested value
 - [ ] Deeper serde interop
   - `From<JsonAst> for serde_json::Value`
   - `From<serde_json::Value> for JsonAst`
