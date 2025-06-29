@@ -2,7 +2,7 @@
   - [x] consolidate code paths for splicing and updating ranges
 - [*] `insert`
   - [x] array values
-  - [*] object keys
+  - [x] object keys
   - [ ] unify index updates
   - [ ] fuzz
 - [ ] Add error type for replace

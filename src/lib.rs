@@ -1307,7 +1307,7 @@ pub fn insert_index(
             let Ok(()) = parse_value(&mut source_tree, &mut cursor) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
-            source_tree.tok_desc[0].end = cursor;
+            source_tree.tok_desc[0].end = source_tree.next_index();
             source_tree
         }
     };
@@ -1356,7 +1356,12 @@ pub fn insert_index(
         InsertionMethod::After => {
             let insertion_index = usize::max(tree.tok_desc[target_index].end, target_index + 1);
             target_replacement_range = insertion_index..insertion_index;
-            target_content_range = tree.tok_span[target_index].end..tree.tok_span[target_index].end;
+            let target_content_index = if tree.is_object_key(target_index) {
+                tree.tok_span[tree.tok_desc[target_index].start].end
+            } else {
+                tree.tok_span[target_index].end
+            };
+            target_content_range = target_content_index..target_content_index;
             source_content_range = target_content_range.start
                 ..target_content_range.end + source_tree.contents.len() + comma_space.len();
             offset_content = target_content_range.start + comma_space.len();
@@ -2027,6 +2032,44 @@ mod test {
                 After,
                 Obj(("baz", json!("qux"))),
                 r#"{"foo": "bar", "baz": "qux"}"#,
+            );
+            check(
+                r#"{<"foo">: "bar", "quz": "qua"}"#,
+                After,
+                Obj(("baz", json!("qux"))),
+                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
+            );
+            check(
+                r#"{<"foo">: "bar", "quz": "qua"}"#,
+                After,
+                Obj(("baz", json!("qux"))),
+                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
+            );
+
+            check(
+                r#"{<"foo">: "bar", "quz": "qua"}"#,
+                Before,
+                Obj(("baz", json!("qux"))),
+                r#"{"baz": "qux", "foo": "bar", "quz": "qua"}"#,
+            );
+            check(
+                r#"{"foo": "bar", <"quz">: "qua"}"#,
+                Before,
+                Obj(("baz", json!("qux"))),
+                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
+            );
+
+            check(
+                r#"<{}>"#,
+                Append,
+                Obj(("baz", json!("qux"))),
+                r#"{"baz": "qux"}"#,
+            );
+            check(
+                r#"<{}>"#,
+                Prepend,
+                Obj(("baz", json!("qux"))),
+                r#"{"baz": "qux"}"#,
             );
         }
     }
