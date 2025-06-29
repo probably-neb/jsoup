@@ -528,8 +528,9 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         }
 
         let value_index = tree.next_index();
-        tree.tok_desc[key_index] = value_index..value_index + 1;
         parse_value(tree, cursor)?;
+        // key descendant range is the value range
+        tree.tok_desc[key_index] = value_index..tree.next_index();
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
@@ -685,7 +686,14 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
             "key of object should be string",
         );
         assert_eq!(0, tree.tok_meta[key_index]);
-        assert_eq!(1, tree.tok_desc[key_index].len());
+        assert_ne!(0, tree.tok_desc[key_index].len());
+        assert_eq!(
+            tree.tok_desc[key_index].end,
+            usize::max(
+                tree.tok_desc[tree.tok_desc[key_index].start].end,
+                tree.tok_desc[key_index].start + 1
+            )
+        );
         key_index = tree.tok_next[key_index] as usize;
         found_count += 1;
     }
@@ -929,11 +937,9 @@ pub fn replace_index(
         target_token_type == Token::Object || target_token_type == Token::Array;
     let source_is_container =
         source_token_type == Token::Object || source_token_type == Token::Array;
-    let target_is_obj_key =
-        target_token_type == Token::String && tree.tok_desc[target_index].len() > 0;
 
     // if replacing key, make sure replacement is string as well
-    if target_is_obj_key && source_token_type != Token::String {
+    if tree.is_object_key(target_index) && source_token_type != Token::String {
         return false;
     }
 
@@ -960,7 +966,9 @@ pub fn replace_index(
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
-        if !target_is_obj_key {
+        if tree.is_object_key(target_index) {
+            tree.tok_desc[target_index].end = target_index + 1;
+        } else {
             tree.tok_desc[target_index] = EMPTY_RANGE;
         }
 
@@ -1060,15 +1068,17 @@ pub fn replace_index(
         }
 
         for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
-            if tok_desc.start >= target_replacement_range.end {
+            if tok_desc.start > source_insertion_range.start {
                 tok_desc.start += tok_diff_positive as usize;
                 tok_desc.start -= tok_diff_negative as usize;
+            }
+            if tok_desc.end > source_insertion_range.start {
                 tok_desc.end += tok_diff_positive as usize;
                 tok_desc.end -= tok_diff_negative as usize;
             }
         }
         for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-            if tok_desc.start >= target_replacement_range.end {
+            if tok_desc.start > source_insertion_range.start {
                 tok_desc.start += tok_diff_positive as usize;
                 tok_desc.start -= tok_diff_negative as usize;
                 tok_desc.end += tok_diff_positive as usize;
