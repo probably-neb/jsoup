@@ -1352,8 +1352,11 @@ pub fn insert_index(
             }
             tree.tok_next[target_reference_index] = source_insertion_range.start as u32;
 
-            for tok_next in &mut tree.tok_next[..source_insertion_range.start] {
-                if *tok_next > source_insertion_range.start as u32 {
+            // todo! not needed, should be
+            // 0..=target_container_index with >=
+            // when flattening
+            for tok_next in &mut tree.tok_next[..=target_container_index] {
+                if *tok_next >= source_insertion_range.start as u32 {
                     *tok_next += diff_token as u32;
                 }
             }
@@ -1445,8 +1448,8 @@ pub fn insert_index(
 
             tree.tok_next[source_insertion_range.start] = target_reference_index as u32;
 
-            for tok_next in &mut tree.tok_next[..source_insertion_range.start] {
-                if *tok_next > source_insertion_range.start as u32 {
+            for tok_next in &mut tree.tok_next[..=target_container_index] {
+                if *tok_next >= source_insertion_range.start as u32 {
                     *tok_next += diff_token as u32;
                 }
             }
@@ -1464,6 +1467,7 @@ pub fn insert_index(
                     *tok_next += diff_token as u32
                 }
             }
+
             for tok_span in &mut tree.tok_span[..source_insertion_range.start] {
                 if tok_span.start > source_content_range.start {
                     tok_span.start += diff_content;
@@ -1511,53 +1515,81 @@ pub fn insert_index(
         // because of transformation above, this is actually just adding the first element
         // to the container
         InsertionMethod::Prepend | InsertionMethod::Append => {
-            todo!();
+            let insertion_index = target_index + 1;
 
-            let offset_content = tree.tok_span[target_index].start;
-            let offset_token = target_index;
-
-            target_replacement_range = target_index..target_index;
-            source_insertion_range = target_index..target_index + source_tree.next_index();
+            target_replacement_range = insertion_index..insertion_index;
             target_content_range =
-                tree.tok_span[target_index].start..tree.tok_span[target_index].start;
+                tree.tok_span[target_index].start + 1..tree.tok_span[target_index].start + 1;
+            content_slices = [source_tree.contents.as_slice(), b""];
+            offset_content = target_content_range.start;
+            source_insertion_range = target_replacement_range.start
+                ..target_replacement_range.end + source_tree.next_index();
+            source_content_range =
+                target_content_range.start..target_content_range.end + source_tree.contents.len();
+            target_reference_index = source_insertion_range.end;
 
-            for tok_next in &mut source_tree.tok_next {
-                if *tok_next != 0 {
-                    *tok_next += offset_token as u32;
-                }
-            }
-            for range in &mut source_tree.tok_span {
-                range.start += offset_content;
-                range.end += offset_content;
-            }
-            for child_range in &mut source_tree.tok_desc {
-                if child_range.start == 0 && child_range.end == 0 {
-                    continue;
-                }
-                child_range.start += offset_token;
-                child_range.end += offset_token;
-            }
-            for comment in &mut source_tree.comments {
-                comment.start += offset_content;
-                comment.end += offset_content;
-            }
-
-            let tok_next_prev = tree.tok_next[target_index];
-
-            tree.comments.append(&mut source_tree.comments);
-            tree.comments.sort_by_key(|r| (r.start, r.end));
-            tree.tok_desc
-                .splice(target_replacement_range.clone(), source_tree.tok_desc);
             tree.tok_kind
                 .splice(target_replacement_range.clone(), source_tree.tok_kind);
-            tree.tok_span
-                .splice(target_replacement_range.clone(), source_tree.tok_span);
             tree.tok_meta
                 .splice(target_replacement_range.clone(), source_tree.tok_meta);
             tree.tok_next
                 .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.contents
-                .splice(target_content_range.clone(), source_tree.contents);
+            tree.tok_desc
+                .splice(target_replacement_range.clone(), source_tree.tok_desc);
+            tree.tok_span
+                .splice(target_replacement_range.clone(), source_tree.tok_span);
+            tree.contents.splice(
+                target_content_range.clone(),
+                content_slices.into_iter().flatten().copied(),
+            );
+
+            let diff_content = source_content_range.len();
+            let diff_token = source_insertion_range.len();
+            dbg!(&source_insertion_range);
+
+            tree.tok_desc[target_index] = insertion_index..insertion_index;
+            let mut container_index = Some(target_container_index);
+            while let Some(outer_container_index) = container_index {
+                tree.tok_desc[outer_container_index].end += diff_token;
+                tree.tok_span[outer_container_index].end += diff_content;
+                container_index = item_container_index(tree, outer_container_index);
+            }
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
+                if *tok_desc != EMPTY_RANGE {
+                    tok_desc.start += source_insertion_range.start;
+                    tok_desc.end += source_insertion_range.start;
+                }
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
+                tok_span.start += offset_content;
+                tok_span.end += offset_content;
+            }
+
+            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
+                tok_span.start += diff_content;
+                tok_span.end += diff_content;
+            }
+
+            for tok_next in &mut tree.tok_next[..=target_container_index] {
+                if *tok_next >= source_insertion_range.start as u32 {
+                    *tok_next += diff_token as u32;
+                }
+            }
+
+            for tok_next in
+                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
+            {
+                if *tok_next != 0 {
+                    *tok_next += source_insertion_range.start as u32;
+                }
+            }
+
+            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
+                if *tok_next != 0 {
+                    *tok_next += diff_token as u32
+                }
+            }
         }
     };
 
@@ -1907,6 +1939,7 @@ mod test {
                 Arr(json!({"baz": "qux"})),
                 r#"[{"foo":"bar"}, {"baz":"qux"}]"#,
             );
+
             check(
                 r#"[<{"foo":"bar"}>]"#,
                 Before,
@@ -1919,14 +1952,27 @@ mod test {
                 Arr(json!([1, 2])),
                 r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#,
             );
-
             check(r#"[1, 2, <4>]"#, Before, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
             check(r#"[<1>, 2, 3]"#, Before, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
             check(r#"[<1>]"#, Before, Arr(json!(0)), r#"[0, 1]"#);
             check(r#"[0, <2>, 3]"#, Before, Arr(json!(1)), r#"[0, 1, 2, 3]"#);
-            // check(r#"<[]>"#, Prepend, Arr(json!(0)), r#"[0]"#);
-            // check(r#"<[1, 2, 3]>"#, Prepend, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
-            // check(r#"<[1, 2, 3]>"#, Append, Arr(json!(4)), r#"[1, 2, 3, 4]"#);
+
+            check(r#"<[1, 2, 3]>"#, Prepend, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
+            check(r#"<[1, 2, 3]>"#, Append, Arr(json!(4)), r#"[1, 2, 3, 4]"#);
+
+            check(r#"<[]>"#, Prepend, Arr(json!(0)), r#"[0]"#);
+            check(
+                r#"<[]>"#,
+                Prepend,
+                Arr(json!({"foo": "bar"})),
+                r#"[{"foo":"bar"}]"#,
+            );
+            check(
+                r#"[[<[]>, 1], 2]"#,
+                Prepend,
+                Arr(json!({"foo": "bar"})),
+                r#"[[[{"foo":"bar"}], 1], 2]"#,
+            );
         }
     }
 }
