@@ -825,7 +825,7 @@ pub struct ArrayItemIter<'a> {
 impl<'a> ArrayItemIter<'a> {
     pub fn new(tree: &'a JsonAst, array_index: usize) -> Self {
         assert_eq!(tree.tok_kind[array_index], Token::Array);
-        let next_index = arr_first_item_index(tree, array_index);
+        let next_index = container_first_item_index(tree, array_index);
         ArrayItemIter { tree, next_index }
     }
 }
@@ -846,16 +846,23 @@ impl<'a> Iterator for ArrayItemIter<'a> {
 }
 
 /// Will be zero if array is empty
-fn arr_first_item_index(tree: &JsonAst, array_index: usize) -> usize {
-    assert_eq!(tree.tok_kind[array_index], Token::Array);
+/// todo! inline
+fn container_first_item_index(tree: &JsonAst, array_index: usize) -> usize {
+    assert!(matches!(
+        tree.tok_kind[array_index],
+        Token::Array | Token::Object
+    ));
     let next_index = tree.tok_desc[array_index].start;
     next_index
 }
 
 /// Will be zero if array is empty
-fn arr_last_item_index(tree: &JsonAst, array_index: usize) -> usize {
-    assert_eq!(tree.tok_kind[array_index], Token::Array);
-    let mut item_index = arr_first_item_index(tree, array_index);
+fn container_last_item_index(tree: &JsonAst, array_index: usize) -> usize {
+    assert!(matches!(
+        tree.tok_kind[array_index],
+        Token::Array | Token::Object
+    ));
+    let mut item_index = container_first_item_index(tree, array_index);
     while tree.tok_next[item_index] != 0 {
         item_index = tree.tok_next[item_index] as usize;
     }
@@ -1179,6 +1186,7 @@ fn index_for_path(tree: &JsonAst, path: &Path, target: ReplaceTarget) -> Option<
     Some(index)
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum InsertionMethod {
     /// index is of item in array or key in object
     Before,
@@ -1205,6 +1213,7 @@ pub enum InsertionError {
     IncorrectContainerType,
     FailedToSerializeValue,
     TargetIsNotItem,
+    TargetIsNotContainer,
 }
 
 impl std::fmt::Display for InsertionError {
@@ -1226,24 +1235,27 @@ pub fn insert_index(
     let is_method_relative_to_item =
         matches!(method, InsertionMethod::After | InsertionMethod::Before);
 
+    let target_tok_kind = tree.tok_kind[target_index];
+    let is_target_container = matches!(target_tok_kind, Token::Array | Token::Object);
     let target_container_index = if is_method_relative_to_item {
         // if target is container, and method is relative to item,
         // or vice versa, the api has been broken
         item_container_index(tree, target_index).ok_or(InsertionError::TargetIsNotItem)? // todo! better error
     } else {
+        if !is_target_container {
+            return Err(InsertionError::TargetIsNotContainer);
+        }
         target_index
     };
-    let target_tok_kind = tree.tok_kind[target_index];
     // todo! remove, this is misleading when inserting after a container
-    let is_target_container = matches!(target_tok_kind, Token::Array | Token::Object);
 
     let is_value_obj_and_target_arr = matches!(source_value, InsertionValue::Obj(_))
         && ((is_method_relative_to_item && !tree.is_object_key(target_index))
-            || (!is_method_relative_to_item && target_tok_kind == Token::Array));
+            || (!is_method_relative_to_item && target_tok_kind != Token::Object));
 
     let is_value_arr_and_target_obj = matches!(source_value, InsertionValue::Arr(_))
         && ((is_method_relative_to_item && tree.is_object_key(target_index))
-            || (!is_method_relative_to_item && target_tok_kind == Token::Object));
+            || (!is_method_relative_to_item && target_tok_kind != Token::Array));
 
     if is_value_obj_and_target_arr || is_value_arr_and_target_obj {
         // cannot insert key, value pair into array
@@ -1289,11 +1301,13 @@ pub fn insert_index(
             ) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
+            let key_len = source_contents.len();
             source_contents.push_str(colon_space);
             let Ok(()) = serde_json::to_writer(unsafe { source_contents.as_mut_vec() }, &value)
             else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
+            dbg!(&source_contents);
             let mut source_tree = JsonAst {
                 tok_next: vec![0],
                 tok_desc: vec![1..1],
@@ -1322,8 +1336,7 @@ pub fn insert_index(
             false => (
                 InsertionMethod::Before,
                 match target_tok_kind {
-                    Token::Array => arr_first_item_index(tree, target_index),
-                    Token::Object => todo!(),
+                    Token::Object | Token::Array => container_first_item_index(tree, target_index),
                     _ => unreachable!(),
                 },
             ),
@@ -1333,8 +1346,7 @@ pub fn insert_index(
             false => (
                 InsertionMethod::After,
                 match target_tok_kind {
-                    Token::Array => arr_last_item_index(tree, target_index),
-                    Token::Object => todo!(),
+                    Token::Object | Token::Array => container_last_item_index(tree, target_index),
                     _ => unreachable!(),
                 },
             ),
@@ -1440,7 +1452,7 @@ pub fn insert_index(
             let mut container_index = Some(target_container_index);
             while let Some(outer_container_index) = container_index {
                 tree.tok_desc[outer_container_index].end += diff_token;
-                container_index = item_container_index(tree, outer_container_index);
+                container_index = item_parent_index(tree, outer_container_index);
             }
 
             for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
@@ -1595,13 +1607,21 @@ pub fn insert_index(
             let mut container_index = Some(target_container_index);
             while let Some(outer_container_index) = container_index {
                 tree.tok_desc[outer_container_index].end += diff_token;
-                tree.tok_span[outer_container_index].end += diff_content;
-                container_index = item_container_index(tree, outer_container_index);
+                if !tree.is_object_key(outer_container_index) {
+                    tree.tok_span[outer_container_index].end += diff_content;
+                }
+                container_index = item_parent_index(tree, outer_container_index);
             }
             for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
                 if *tok_desc != EMPTY_RANGE {
                     tok_desc.start += source_insertion_range.start;
                     tok_desc.end += source_insertion_range.start;
+                }
+            }
+            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
+                if *tok_desc != EMPTY_RANGE {
+                    tok_desc.start += diff_token;
+                    tok_desc.end += diff_token;
                 }
             }
 
@@ -1643,7 +1663,12 @@ pub fn insert_index(
     Ok(())
 }
 
-fn item_container_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
+fn item_container_index(tree: &JsonAst, item_index: usize) -> Option<usize> {
+    return item_parent_index(tree, item_index)
+        .filter(|&parent_index| !tree.is_object_key(parent_index));
+}
+
+fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
     let mut cur_index = item_index;
     while cur_index > 0 {
         if tree.tok_next[cur_index] as usize == item_index {
@@ -1957,7 +1982,7 @@ mod test {
                 .expect("index found");
 
             let err = insert_index(&mut tree, source, insertion_method, index)
-                .expect_err("insert failed");
+                .expect_err("expected insert to fail");
             assert_eq!(err, expected_err);
             assert_tree_valid(&tree);
 
@@ -1982,6 +2007,12 @@ mod test {
                 After,
                 Arr(json!({"baz": "qux"})),
                 r#"[{"foo":"bar"}, {"baz":"qux"}]"#,
+            );
+            check_fail(
+                r#"[<null>]"#,
+                Append,
+                Arr(json!(null)),
+                InsertionError::TargetIsNotContainer,
             );
 
             check(
@@ -2017,6 +2048,12 @@ mod test {
                 Arr(json!({"foo": "bar"})),
                 r#"[[[{"foo":"bar"}], 1], 2]"#,
             );
+            check(
+                r#"[<[]>,null,null,[null]]"#,
+                Prepend,
+                Arr(json!(null)),
+                r#"[[null],null,null,[null]]"#,
+            )
         }
 
         #[test]
@@ -2045,6 +2082,12 @@ mod test {
                 Obj(("baz", json!("qux"))),
                 r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
             );
+            check_fail(
+                r#"{"": <null>}"#,
+                After,
+                Arr(json!(null)),
+                InsertionError::TargetIsNotItem,
+            );
 
             check(
                 r#"{<"foo">: "bar", "quz": "qua"}"#,
@@ -2070,6 +2113,18 @@ mod test {
                 Prepend,
                 Obj(("baz", json!("qux"))),
                 r#"{"baz": "qux"}"#,
+            );
+            check(
+                r#"<{}>"#,
+                Append,
+                Obj(("y\0c", json!(null))),
+                r#"{"y\u0000c": null}"#,
+            );
+            check(
+                r#"{"\n":false,"0":<{}>}"#,
+                Append,
+                Obj(("", json!({}))),
+                r#"{"\n":false,"0":{"": {}}}"#,
             );
         }
     }
