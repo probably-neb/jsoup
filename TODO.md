@@ -7,8 +7,15 @@
   - [ ] unify index updates
 - [ ] Add error type for replace
 - [ ] `remove` values
+  - just takes index to remove
+  - [ ] if key remove value as well
+  - [ ] if value for key, then set to null?
 - [ ] use `usize::signed_diff` instead of `+ positive - negative`
 - [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
+- [ ] Improve `tok_span`
+  - [ ] default to `tok_index..tok_index`
+  - [ ] make updating loops just add instead of checking for `EMPTY_RANGE`
+  - [ ] replace instances of `usize::max(tree.tok_desc[i].end, i + 1)` with `tree.tok_desc[i].end`
 - [ ] Improve container tok range
   - store last item index, and complete end of last item in tok_desc instead of start and end
   - start will always be index + 1, and storing both ends avoids:
