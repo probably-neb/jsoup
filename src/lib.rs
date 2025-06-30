@@ -32,7 +32,7 @@ impl std::fmt::Debug for JsonAst {
                     .map(|range| {
                         (
                             range.clone(),
-                            std::str::from_utf8(&self.contents[range.clone()]),
+                            self.contents.get(range.clone()).map(std::str::from_utf8),
                         )
                     })
                     .collect::<Vec<_>>(),
@@ -1236,6 +1236,7 @@ pub fn insert_index(
         matches!(method, InsertionMethod::After | InsertionMethod::Before);
 
     let target_tok_kind = tree.tok_kind[target_index];
+    // todo! remove, this is misleading when inserting after a container
     let is_target_container = matches!(target_tok_kind, Token::Array | Token::Object);
     let target_container_index = if is_method_relative_to_item {
         // if target is container, and method is relative to item,
@@ -1247,7 +1248,6 @@ pub fn insert_index(
         }
         target_index
     };
-    // todo! remove, this is misleading when inserting after a container
 
     let is_value_obj_and_target_arr = matches!(source_value, InsertionValue::Obj(_))
         && ((is_method_relative_to_item && !tree.is_object_key(target_index))
@@ -1296,15 +1296,22 @@ pub fn insert_index(
                 key_len + colon_space.len() + 64, /* perf: estimate value len better */
             );
             let Ok(()) = serde_json::to_writer(
+                // safety: serde_json guaruntees it only writes valid utf8 bytes
                 unsafe { source_contents.as_mut_vec() },
                 &serde_json::Value::String(key),
             ) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
+            // must calculate the length of the key after serialization,
+            // as serialization may change the length based on encoding of special characters
+            // but before pushing the colon and space
             let key_len = source_contents.len();
             source_contents.push_str(colon_space);
-            let Ok(()) = serde_json::to_writer(unsafe { source_contents.as_mut_vec() }, &value)
-            else {
+            let Ok(()) = serde_json::to_writer(
+                // safety: serde_json guaruntees it only writes valid utf8 bytes
+                unsafe { source_contents.as_mut_vec() },
+                &value,
+            ) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
             let mut source_tree = JsonAst {
@@ -1325,12 +1332,9 @@ pub fn insert_index(
         }
     };
 
-    let is_target_container_empty =
-        is_target_container && tree.tok_desc[target_index] == EMPTY_RANGE;
-
     let (method, target_index) = match method {
         InsertionMethod::Before | InsertionMethod::After => (method, target_index),
-        InsertionMethod::Prepend => match is_target_container_empty {
+        InsertionMethod::Prepend => match tree.tok_desc[target_index] == EMPTY_RANGE {
             true => (InsertionMethod::Prepend, target_index),
             false => (
                 InsertionMethod::Before,
@@ -1340,7 +1344,7 @@ pub fn insert_index(
                 },
             ),
         },
-        InsertionMethod::Append => match is_target_container_empty {
+        InsertionMethod::Append => match tree.tok_desc[target_index] == EMPTY_RANGE {
             true => (InsertionMethod::Append, target_index),
             false => (
                 InsertionMethod::After,
@@ -1352,310 +1356,177 @@ pub fn insert_index(
         },
     };
 
-    let target_replacement_range;
-    // let target_content_range;
-    let source_insertion_range;
-    let target_content_range;
-    let source_content_range;
-
-    let offset_content;
+    // the index in the target tree's token data lists
+    // to insert the source trees data
+    let target_tok_insertion_index;
+    // the index in the target tree's content to insert
+    // the content slices
+    let target_content_insertion_index;
+    // the content to insert at target_content_insertion_index
     let content_slices;
     let comma_space = *b", ";
-    let target_reference_index;
+    // The next item in the container after the newly inserted item is
+    // context dependent in append, after, and prepend/append.
+    let source_tok_next;
+    // The offset of the content within the source tree. I.e. when inserting after an item,
+    // this is the length of the ", ".
+    // Needed to correctly adjust the content ranges within the source tree
+    let source_content_offset;
 
     match method {
         InsertionMethod::After => {
-            let insertion_index = usize::max(tree.tok_desc[target_index].end, target_index + 1);
-            target_replacement_range = insertion_index..insertion_index;
-            let target_content_index = if tree.is_object_key(target_index) {
+            target_tok_insertion_index =
+                usize::max(tree.tok_desc[target_index].end, target_index + 1);
+            target_content_insertion_index = if tree.is_object_key(target_index) {
                 tree.tok_span[tree.tok_desc[target_index].start].end
             } else {
                 tree.tok_span[target_index].end
             };
-            target_content_range = target_content_index..target_content_index;
-            source_content_range = target_content_range.start
-                ..target_content_range.end + source_tree.contents.len() + comma_space.len();
-            offset_content = target_content_range.start + comma_space.len();
-            source_insertion_range = target_replacement_range.start
-                ..target_replacement_range.end + source_tree.next_index();
+            source_content_offset = comma_space.len();
 
             content_slices = [&comma_space, source_tree.contents.as_slice()];
-            target_reference_index = target_index;
 
-            tree.tok_kind
-                .splice(target_replacement_range.clone(), source_tree.tok_kind);
-            tree.tok_meta
-                .splice(target_replacement_range.clone(), source_tree.tok_meta);
-            tree.tok_next
-                .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.tok_desc
-                .splice(target_replacement_range.clone(), source_tree.tok_desc);
-            tree.tok_span
-                .splice(target_replacement_range.clone(), source_tree.tok_span);
-            tree.contents.splice(
-                target_content_range.clone(),
-                content_slices.into_iter().flatten().copied(),
-            );
-
-            let diff_content = source_content_range.len();
-            let diff_token = source_insertion_range.len();
-
-            let tok_next_prev = tree.tok_next[target_reference_index];
+            let tok_next_prev = tree.tok_next[target_index];
             if tok_next_prev != 0 {
-                tree.tok_next[source_insertion_range.start] =
-                    tok_next_prev + source_insertion_range.len() as u32;
+                source_tok_next = tok_next_prev + source_tree.next_index() as u32;
+            } else {
+                source_tok_next = 0;
             }
-            tree.tok_next[target_reference_index] = source_insertion_range.start as u32;
-
-            // todo! not needed, should be
-            // 0..=target_container_index with >=
-            // when flattening
-            for tok_next in &mut tree.tok_next[..=target_container_index] {
-                if *tok_next >= source_insertion_range.start as u32 {
-                    *tok_next += diff_token as u32;
-                }
-            }
-
-            for tok_next in
-                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
-            {
-                if *tok_next != 0 {
-                    *tok_next += source_insertion_range.start as u32;
-                }
-            }
-
-            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
-                if *tok_next != 0 {
-                    *tok_next += diff_token as u32
-                }
-            }
-            for tok_span in &mut tree.tok_span[..source_insertion_range.start] {
-                if tok_span.start > source_content_range.start {
-                    tok_span.start += diff_content;
-                }
-                if tok_span.end > source_content_range.start {
-                    tok_span.end += diff_content;
-                }
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
-                tok_span.start += offset_content;
-                tok_span.end += offset_content;
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
-                tok_span.start += diff_content;
-                tok_span.end += diff_content;
-            }
-
-            let mut container_index = Some(target_container_index);
-            while let Some(outer_container_index) = container_index {
-                tree.tok_desc[outer_container_index].end += diff_token;
-                container_index = item_parent_index(tree, outer_container_index);
-            }
-
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
-                if *tok_desc != EMPTY_RANGE {
-                    tok_desc.start += source_insertion_range.start;
-                    tok_desc.end += source_insertion_range.start;
-                }
-            }
-
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-                if tok_desc.start > source_insertion_range.start {
-                    tok_desc.start += diff_token;
-                }
-                if tok_desc.end > source_insertion_range.start {
-                    tok_desc.end += diff_token;
-                }
-            }
+            tree.tok_next[target_index] = target_tok_insertion_index as u32;
         }
         InsertionMethod::Before => {
-            let insertion_index = target_index;
-            target_replacement_range = insertion_index..insertion_index;
-            target_content_range =
-                tree.tok_span[target_index].start..tree.tok_span[target_index].start;
+            target_tok_insertion_index = target_index;
+            target_content_insertion_index = tree.tok_span[target_index].start;
             content_slices = [source_tree.contents.as_slice(), &comma_space];
-            offset_content = target_content_range.start;
-            source_insertion_range = target_replacement_range.start
-                ..target_replacement_range.end + source_tree.next_index();
-            source_content_range = target_content_range.start
-                ..target_content_range.end + source_tree.contents.len() + comma_space.len();
-            target_reference_index = source_insertion_range.end;
-
-            tree.tok_kind
-                .splice(target_replacement_range.clone(), source_tree.tok_kind);
-            tree.tok_meta
-                .splice(target_replacement_range.clone(), source_tree.tok_meta);
-            tree.tok_next
-                .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.tok_desc
-                .splice(target_replacement_range.clone(), source_tree.tok_desc);
-            tree.tok_span
-                .splice(target_replacement_range.clone(), source_tree.tok_span);
-            tree.contents.splice(
-                target_content_range.clone(),
-                content_slices.into_iter().flatten().copied(),
-            );
-
-            let diff_content = source_content_range.len();
-            let diff_token = source_insertion_range.len();
-
-            tree.tok_next[source_insertion_range.start] = target_reference_index as u32;
-
-            for tok_next in &mut tree.tok_next[..=target_container_index] {
-                if *tok_next >= source_insertion_range.start as u32 {
-                    *tok_next += diff_token as u32;
-                }
-            }
-
-            for tok_next in
-                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
-            {
-                if *tok_next != 0 {
-                    *tok_next += source_insertion_range.start as u32;
-                }
-            }
-
-            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
-                if *tok_next != 0 {
-                    *tok_next += diff_token as u32
-                }
-            }
-
-            for tok_span in &mut tree.tok_span[..source_insertion_range.start] {
-                if tok_span.start > source_content_range.start {
-                    tok_span.start += diff_content;
-                }
-                if tok_span.end > source_content_range.start {
-                    tok_span.end += diff_content;
-                }
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
-                tok_span.start += offset_content;
-                tok_span.end += offset_content;
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
-                tok_span.start += diff_content;
-                tok_span.end += diff_content;
-            }
-
-            for tok_desc in &mut tree.tok_desc[..source_insertion_range.start] {
-                if tok_desc.start > source_insertion_range.start {
-                    tok_desc.start += diff_token;
-                }
-                if tok_desc.end > source_insertion_range.start {
-                    tok_desc.end += diff_token;
-                }
-            }
-
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
-                if *tok_desc != EMPTY_RANGE {
-                    tok_desc.start += source_insertion_range.start;
-                    tok_desc.end += source_insertion_range.start;
-                }
-            }
-
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-                if tok_desc.start > source_insertion_range.start {
-                    tok_desc.start += diff_token;
-                }
-                if tok_desc.end > source_insertion_range.start {
-                    tok_desc.end += diff_token;
-                }
-            }
+            source_content_offset = 0;
+            source_tok_next = (target_tok_insertion_index + source_tree.next_index()) as u32;
         }
         // because of transformation above, this is actually just adding the first element
         // to the container
         InsertionMethod::Prepend | InsertionMethod::Append => {
-            let insertion_index = target_index + 1;
+            target_tok_insertion_index = target_index + 1;
 
-            target_replacement_range = insertion_index..insertion_index;
-            target_content_range =
-                tree.tok_span[target_index].start + 1..tree.tok_span[target_index].start + 1;
+            target_content_insertion_index = tree.tok_span[target_index].start + 1;
             content_slices = [source_tree.contents.as_slice(), b""];
-            offset_content = target_content_range.start;
-            source_insertion_range = target_replacement_range.start
-                ..target_replacement_range.end + source_tree.next_index();
-            source_content_range =
-                target_content_range.start..target_content_range.end + source_tree.contents.len();
-            target_reference_index = source_insertion_range.end;
+            source_content_offset = 0;
+            source_tok_next = 0;
 
-            tree.tok_kind
-                .splice(target_replacement_range.clone(), source_tree.tok_kind);
-            tree.tok_meta
-                .splice(target_replacement_range.clone(), source_tree.tok_meta);
-            tree.tok_next
-                .splice(target_replacement_range.clone(), source_tree.tok_next);
-            tree.tok_desc
-                .splice(target_replacement_range.clone(), source_tree.tok_desc);
-            tree.tok_span
-                .splice(target_replacement_range.clone(), source_tree.tok_span);
-            tree.contents.splice(
-                target_content_range.clone(),
-                content_slices.into_iter().flatten().copied(),
-            );
-
-            let diff_content = source_content_range.len();
-            let diff_token = source_insertion_range.len();
-
-            tree.tok_desc[target_index] = insertion_index..insertion_index;
-            let mut container_index = Some(target_container_index);
-            while let Some(outer_container_index) = container_index {
-                tree.tok_desc[outer_container_index].end += diff_token;
-                if !tree.is_object_key(outer_container_index) {
-                    tree.tok_span[outer_container_index].end += diff_content;
-                }
-                container_index = item_parent_index(tree, outer_container_index);
-            }
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
-                if *tok_desc != EMPTY_RANGE {
-                    tok_desc.start += source_insertion_range.start;
-                    tok_desc.end += source_insertion_range.start;
-                }
-            }
-            for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-                if *tok_desc != EMPTY_RANGE {
-                    tok_desc.start += diff_token;
-                    tok_desc.end += diff_token;
-                }
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
-                tok_span.start += offset_content;
-                tok_span.end += offset_content;
-            }
-
-            for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
-                tok_span.start += diff_content;
-                tok_span.end += diff_content;
-            }
-
-            for tok_next in &mut tree.tok_next[..=target_container_index] {
-                if *tok_next >= source_insertion_range.start as u32 {
-                    *tok_next += diff_token as u32;
-                }
-            }
-
-            for tok_next in
-                &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
-            {
-                if *tok_next != 0 {
-                    *tok_next += source_insertion_range.start as u32;
-                }
-            }
-
-            for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
-                if *tok_next != 0 {
-                    *tok_next += diff_token as u32
-                }
-            }
+            tree.tok_desc[target_index] = target_tok_insertion_index..target_tok_insertion_index;
         }
     };
 
+    let diff_content = content_slices.iter().map(|s| s.len()).sum::<usize>();
+    let diff_token = source_tree.next_index();
+
+    let source_insertion_range =
+        target_tok_insertion_index..target_tok_insertion_index + source_tree.next_index();
+
+    tree.tok_kind.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_kind,
+    );
+    tree.tok_meta.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_meta,
+    );
+    tree.tok_next.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_next,
+    );
+    tree.tok_desc.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_desc,
+    );
+    tree.tok_span.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_span,
+    );
+    tree.contents.splice(
+        target_content_insertion_index..target_content_insertion_index,
+        content_slices.into_iter().flatten().copied(),
+    );
+
+    // meta on containers is the length, this will always have increased by one
+    // after the insertion
     tree.tok_meta[target_container_index] += 1;
+
+    // up to the start of the container we are inserting into, if a tok_next
+    // is >= the start of the insertion range, we are in a container of depth > 1
+    // and need to adjust it by the difference in tokens to point at the same token
+    for tok_next in &mut tree.tok_next[..=target_container_index] {
+        // >= because if the container was empty before the insertion, the
+        // tok_next of the container pointing to it's next sibling would be the
+        // start of the insertion range
+        assert_ne!(
+            source_insertion_range.start, 0,
+            "must be inserting into a container, which by construction must be at a lower index than it's children"
+        );
+        if *tok_next >= source_insertion_range.start as u32 {
+            *tok_next += diff_token as u32;
+        }
+    }
+
+    tree.tok_next[source_insertion_range.start] = source_tok_next;
+    // except for the first token, which we set explicitly, all tokens within the insertion range
+    // should be offset by the start of the insertion range
+    for tok_next in &mut tree.tok_next[source_insertion_range.start + 1..source_insertion_range.end]
+    {
+        if *tok_next != 0 {
+            *tok_next += source_insertion_range.start as u32;
+        }
+    }
+
+    // for tokens after the insertion range, we need to offset them by the difference in tokens
+    for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
+        if *tok_next != 0 {
+            *tok_next += diff_token as u32
+        }
+    }
+
+    // the only tokens before the insertion range that need to have their
+    // descendant and content ranges updated are the ancestors of the container
+    // we are inserting into
+    let mut container_index = Some(target_container_index);
+    while let Some(outer_container_index) = container_index {
+        tree.tok_desc[outer_container_index].end += diff_token;
+        if !tree.is_object_key(outer_container_index) {
+            tree.tok_span[outer_container_index].end += diff_content;
+        }
+        container_index = item_parent_index(tree, outer_container_index);
+    }
+
+    // all tokens within the insertion range need to have their descendant and content ranges
+    // offset by the start of the insertion range
+    for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
+        if *tok_desc != EMPTY_RANGE {
+            tok_desc.start += source_insertion_range.start;
+            tok_desc.end += source_insertion_range.start;
+        }
+    }
+    // all tokens after the insertion range need to have their descendant and content ranges
+    // offset by the difference in token length
+    for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
+        if *tok_desc != EMPTY_RANGE {
+            tok_desc.start += diff_token;
+            tok_desc.end += diff_token;
+        }
+    }
+
+    // all tokens within the insertion range need to have their content ranges
+    // offset by the start of the insertion range, as well as the source_content_offset
+    // which describes the offset within the source content that the source_tree actually
+    // starts at (e.g. 2 when inserting a ", " before the first token in the source tree)
+    for tok_span in &mut tree.tok_span[source_insertion_range.clone()] {
+        tok_span.start += target_content_insertion_index + source_content_offset;
+        tok_span.end += target_content_insertion_index + source_content_offset;
+    }
+
+    // all tokens after the insertion range need to have their content ranges
+    // offset by the difference in content length
+    for tok_span in &mut tree.tok_span[source_insertion_range.end..] {
+        tok_span.start += diff_content;
+        tok_span.end += diff_content;
+    }
 
     // todo! return index of new item
     Ok(())

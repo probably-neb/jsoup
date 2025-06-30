@@ -4,7 +4,7 @@
   - [x] array values
   - [x] object keys
   - [x] fuzz
-  - [ ] unify index updates
+  - [x] unify index updates
 - [ ] Add error type for replace
 - [ ] `remove` values
   - just takes index to remove
