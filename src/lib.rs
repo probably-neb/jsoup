@@ -1532,6 +1532,68 @@ pub fn insert_index(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RemoveError {
+    InvalidIndex,
+}
+
+fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), RemoveError> {
+    if index >= tree.next_index() {
+        return Err(RemoveError::InvalidIndex);
+    }
+
+    let token_removal_range = index..usize::max(tree.tok_desc[index].end, index + 1);
+    let contents_removal_range = tree.tok_span[index].clone();
+
+    let parent_index = item_parent_index(tree, index);
+
+    tree.tok_desc.drain(token_removal_range.clone());
+    tree.tok_kind.drain(token_removal_range.clone());
+    tree.tok_span.drain(token_removal_range.clone());
+    tree.tok_next.drain(token_removal_range.clone());
+    tree.tok_meta.drain(token_removal_range.clone());
+    tree.contents.drain(contents_removal_range.clone());
+
+    let diff_token = token_removal_range.len();
+    let diff_contents = contents_removal_range.len();
+
+    let mut ancestor_index = parent_index;
+    while let Some(parent_index) = ancestor_index {
+        tree.tok_desc[parent_index].end -= diff_token;
+        if tree.tok_desc[parent_index].len() == 0 {
+            tree.tok_desc[parent_index] = EMPTY_RANGE;
+        }
+        if !tree.is_object_key(parent_index) {
+            tree.tok_span[parent_index].end -= diff_contents;
+        }
+        ancestor_index = item_parent_index(tree, parent_index);
+    }
+
+    if let Some(parent_index) = parent_index {
+        tree.tok_meta[parent_index] -= 1;
+    }
+
+    for tok_desc in &mut tree.tok_desc[token_removal_range.start..] {
+        if *tok_desc != EMPTY_RANGE {
+            tok_desc.start -= diff_token;
+            tok_desc.end -= diff_token;
+        }
+    }
+
+    for tok_span in &mut tree.tok_span[token_removal_range.start..] {
+        tok_span.start -= diff_contents;
+        tok_span.end -= diff_contents;
+    }
+
+    for tok_next in &mut tree.tok_next[token_removal_range.start..] {
+        if *tok_next != 0 {
+            *tok_next -= diff_token as u32;
+        }
+    }
+
+    Ok(())
+}
+
 fn item_container_index(tree: &JsonAst, item_index: usize) -> Option<usize> {
     return item_parent_index(tree, item_index)
         .filter(|&parent_index| !tree.is_object_key(parent_index));
@@ -1995,6 +2057,32 @@ mod test {
                 Obj(("", json!({}))),
                 r#"{"\n":false,"0":{"": {}}}"#,
             );
+        }
+    }
+
+    mod remove {
+        use crate::{assert_tree_valid, parse, remove_index, test::extract_delimited};
+
+        fn check(input: impl Into<String>, expected: impl Into<String>) {
+            let (input, range) = extract_delimited(&input.into());
+            let mut tree = parse(&input).expect("parse failed");
+            let index = tree
+                .tok_span
+                .iter()
+                .position(|r| r == &range)
+                .expect("range found");
+
+            remove_index(&mut tree, index).expect("Remove succeeded");
+            let expected_tree = parse(&expected.into()).expect("contents valid after remove");
+
+            pretty_assertions::assert_eq!(&tree, &expected_tree);
+
+            assert_tree_valid(&tree);
+        }
+
+        #[test]
+        fn remove() {
+            check("[<1>]", "[]");
         }
     }
 }
