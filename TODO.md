@@ -5,11 +5,11 @@
   - [x] object keys
   - [x] fuzz
   - [x] unify index updates
+- [x] `remove` values
+  - [x] just takes index to remove
+  - [x] if key remove value as well
+  - [x] if value for key, then set to null?
 - [ ] Add error type for replace
-- [ ] `remove` values
-  - just takes index to remove
-  - [ ] if key remove value as well
-  - [ ] if value for key, then set to null?
 - [ ] use `usize::signed_diff` instead of `+ positive - negative`
 - [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
 - [ ] Improve `tok_span`
