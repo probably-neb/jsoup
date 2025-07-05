@@ -80,10 +80,6 @@ impl JsonAst {
         self.hash(&mut hasher);
         hasher.finish()
     }
-
-    pub fn is_object_key(&self, target_index: usize) -> bool {
-        self.tok_kind[target_index] == Token::String && self.tok_desc[target_index].len() > 0
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -924,6 +920,10 @@ pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
     return &contents_str[adjusted_range];
 }
 
+pub fn is_object_key(tree: &JsonAst, target_index: usize) -> bool {
+    tree.tok_kind[target_index] == Token::String && tree.tok_desc[target_index].len() > 0
+}
+
 pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
     match value {
         serde_json::Value::Null => 0,
@@ -967,7 +967,7 @@ pub fn replace_index(
         source_token_type == Token::Object || source_token_type == Token::Array;
 
     // if replacing key, make sure replacement is string as well
-    if tree.is_object_key(target_index) && source_token_type != Token::String {
+    if is_object_key(tree, target_index) && source_token_type != Token::String {
         return false;
     }
 
@@ -994,7 +994,7 @@ pub fn replace_index(
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
-        if tree.is_object_key(target_index) {
+        if is_object_key(tree, target_index) {
             tree.tok_desc[target_index].end = target_index + 1;
         } else {
             tree.tok_desc[target_index] = EMPTY_RANGE;
@@ -1271,11 +1271,11 @@ pub fn insert_index(
     };
 
     let is_value_obj_and_target_arr = matches!(source_value, InsertionValue::Obj(_))
-        && ((is_method_relative_to_item && !tree.is_object_key(target_index))
+        && ((is_method_relative_to_item && !is_object_key(tree, target_index))
             || (!is_method_relative_to_item && target_tok_kind != Token::Object));
 
     let is_value_arr_and_target_obj = matches!(source_value, InsertionValue::Arr(_))
-        && ((is_method_relative_to_item && tree.is_object_key(target_index))
+        && ((is_method_relative_to_item && is_object_key(tree, target_index))
             || (!is_method_relative_to_item && target_tok_kind != Token::Array));
 
     if is_value_obj_and_target_arr || is_value_arr_and_target_obj {
@@ -1398,7 +1398,7 @@ pub fn insert_index(
         InsertionMethod::After => {
             target_tok_insertion_index =
                 usize::max(tree.tok_desc[target_index].end, target_index + 1);
-            target_content_insertion_index = if tree.is_object_key(target_index) {
+            target_content_insertion_index = if is_object_key(tree, target_index) {
                 tree.tok_span[tree.tok_desc[target_index].start].end
             } else {
                 tree.tok_span[target_index].end
@@ -1510,7 +1510,7 @@ pub fn insert_index(
     let mut container_index = Some(target_container_index);
     while let Some(outer_container_index) = container_index {
         tree.tok_desc[outer_container_index].end += diff_token;
-        if !tree.is_object_key(outer_container_index) {
+        if !is_object_key(tree, outer_container_index) {
             tree.tok_span[outer_container_index].end += diff_content;
         }
         container_index = item_parent_index(tree, outer_container_index);
@@ -1566,7 +1566,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
 
     let parent_index = item_parent_index(tree, index);
 
-    if let Some(key_index) = parent_index.filter(|&i| tree.is_object_key(i)) {
+    if let Some(key_index) = parent_index.filter(|&i| is_object_key(tree, i)) {
         if replace_index(tree, index, &serde_json::json!(null)) {
             return Ok(());
         } else {
@@ -1590,7 +1590,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     tree.tok_meta.drain(token_removal_range.clone());
     tree.contents.drain(contents_removal_range.clone());
 
-    if let Some(parent_index) = parent_index.filter(|&i| !tree.is_object_key(i)) {
+    if let Some(parent_index) = parent_index.filter(|&i| !is_object_key(tree, i)) {
         tree.tok_meta[parent_index] -= 1;
     }
 
@@ -1603,7 +1603,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
         if tree.tok_desc[parent_index].len() == 0 {
             tree.tok_desc[parent_index] = EMPTY_RANGE;
         }
-        if !tree.is_object_key(parent_index) {
+        if !is_object_key(tree, parent_index) {
             tree.tok_span[parent_index].end -= diff_contents;
         }
         ancestor_index = item_parent_index(tree, parent_index);
@@ -1632,7 +1632,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
 
 fn item_container_index(tree: &JsonAst, item_index: usize) -> Option<usize> {
     return item_parent_index(tree, item_index)
-        .filter(|&parent_index| !tree.is_object_key(parent_index));
+        .filter(|&parent_index| !is_object_key(tree, parent_index));
 }
 
 fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
