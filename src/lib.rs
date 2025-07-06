@@ -1312,7 +1312,7 @@ pub fn insert_index(
                     tok_desc: vec![EMPTY_RANGE],
                     tok_kind: vec![source_token_kind],
                     tok_meta: vec![source_token_meta],
-                    tok_term: vec![todo!()],
+                    tok_term: vec![0],
                     comments: vec![],
                     contents: source_contents.into_bytes(),
                 }
@@ -1351,7 +1351,7 @@ pub fn insert_index(
                 tok_kind: vec![Token::String],
                 tok_meta: vec![0],
                 tok_span: vec![0..key_len],
-                tok_term: vec![todo!()],
+                tok_term: vec![0],
                 comments: vec![],
                 contents: source_contents.into_bytes(),
             };
@@ -1360,6 +1360,7 @@ pub fn insert_index(
                 return Err(InsertionError::FailedToSerializeValue);
             };
             source_tree.tok_desc[0].end = source_tree.next_index();
+            source_tree.tok_term[0] = source_tree.tok_term[1];
             source_tree
         }
     };
@@ -1473,6 +1474,10 @@ pub fn insert_index(
         target_tok_insertion_index..target_tok_insertion_index,
         source_tree.tok_span,
     );
+    tree.tok_term.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_term,
+    );
     tree.contents.splice(
         target_content_insertion_index..target_content_insertion_index,
         content_slices.into_iter().flatten().copied(),
@@ -1521,6 +1526,7 @@ pub fn insert_index(
     let mut container_index = Some(target_container_index);
     while let Some(outer_container_index) = container_index {
         tree.tok_desc[outer_container_index].end += diff_token;
+        tree.tok_term[outer_container_index] += diff_token as u32;
         if !is_object_key(tree, outer_container_index) {
             tree.tok_span[outer_container_index].end += diff_content;
         }
@@ -1535,6 +1541,7 @@ pub fn insert_index(
             tok_desc.end += source_insertion_range.start;
         }
     }
+
     // all tokens after the insertion range need to have their descendant and content ranges
     // offset by the difference in token length
     for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
@@ -1542,6 +1549,14 @@ pub fn insert_index(
             tok_desc.start += diff_token;
             tok_desc.end += diff_token;
         }
+    }
+
+    for tok_term in &mut tree.tok_term[source_insertion_range.clone()] {
+        *tok_term += source_insertion_range.start as u32;
+    }
+
+    for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
+        *tok_term += diff_token as u32;
     }
 
     // all tokens within the insertion range need to have their content ranges

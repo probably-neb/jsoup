@@ -12,7 +12,7 @@
   - [x] fuzz
 - [x] Add error type for replace
 - [x] use `usize::signed_diff` instead of `+ positive - negative`
-- [ ] Improve `tok_span`
+- [ ] Improve `tok_desc`
   - [ ] default to `tok_index..tok_index`
   - [ ] make updating loops just add instead of checking for `EMPTY_RANGE`
   - [ ] replace instances of `usize::max(tree.tok_desc[i].end, i + 1)` with `tree.tok_desc[i].end`
