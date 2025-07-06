@@ -15,6 +15,9 @@ pub struct JsonAst {
     pub tok_kind: Vec<Token>,
     /// short for tok_descendants
     pub tok_desc: Vec<Range<usize>>,
+    /// short for tok_termination:
+    /// the index of the last item in the subtree starting at this node
+    pub tok_term: Vec<u32>,
     pub tok_meta: Vec<u32>,
     pub tok_next: Vec<u32>,
     pub comments: Vec<Range<usize>>,
@@ -41,6 +44,7 @@ impl std::fmt::Debug for JsonAst {
             .field("tok_desc", &self.tok_desc)
             .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
+            .field("tok_term", &self.tok_term)
             .field("comments", &self.comments)
             .finish()
     }
@@ -72,6 +76,7 @@ impl JsonAst {
         assert_eq!(self.tok_span.len(), self.tok_desc.len());
         assert_eq!(self.tok_span.len(), self.tok_meta.len());
         assert_eq!(self.tok_span.len(), self.tok_next.len());
+        assert_eq!(self.tok_span.len(), self.tok_term.len());
     }
 
     pub fn hash_default(&self) -> u64 {
@@ -154,7 +159,7 @@ pub enum PathEntry {
 pub struct Path(pub Vec<PathEntry>);
 
 impl Path {
-    fn from_str(s: &str) -> Path {
+    pub fn from_str(s: &str) -> Path {
         if s.is_empty() {
             return Self(Vec::new());
         }
@@ -180,6 +185,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         tok_desc: Vec::new(),
         tok_meta: Vec::new(),
         tok_next: Vec::new(),
+        tok_term: Vec::new(),
         comments: Vec::new(),
     };
 
@@ -301,6 +307,7 @@ fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b'n', b'u', b'l', b'l'] {
         return Err(ParseError::InvalidNull);
     }
+    tree.tok_term.push(tree.next_index() as u32);
     tree.tok_span.push(*cursor..*cursor + 4);
     *cursor += 4;
     tree.tok_kind.push(Token::Null);
@@ -318,6 +325,7 @@ fn parse_true(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b't', b'r', b'u', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
+    tree.tok_term.push(tree.next_index() as u32);
     tree.tok_span.push(*cursor..*cursor + 4);
     *cursor += 4;
     tree.tok_kind.push(Token::Boolean);
@@ -336,6 +344,7 @@ fn parse_false(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     if &tree.contents[*cursor..*cursor + 5] != [b'f', b'a', b'l', b's', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
+    tree.tok_term.push(tree.next_index() as u32);
     tree.tok_span.push(*cursor..*cursor + 5);
     *cursor += 5;
     tree.tok_kind.push(Token::Boolean);
@@ -366,6 +375,7 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 let range = start..*cursor;
                 assert_eq!(tree.contents[range.start], b'"');
                 assert_eq!(tree.contents[range.end - 1], b'"');
+                tree.tok_term.push(tree.next_index() as u32);
                 tree.tok_span.push(range);
                 tree.tok_kind.push(Token::String);
                 tree.tok_desc.push(EMPTY_RANGE);
@@ -448,6 +458,7 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         meta |= NUM_FLOAT;
     }
 
+    tree.tok_term.push(tree.next_index() as u32);
     tree.tok_span.push(start..*cursor);
     tree.tok_kind.push(Token::Number);
     tree.tok_desc.push(EMPTY_RANGE);
@@ -483,6 +494,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         return Err(ParseError::UnexpectedEndOfInput);
     }
     let obj_index = tree.next_index();
+    tree.tok_term.push(obj_index as u32);
     tree.tok_span.push(*cursor..*cursor);
     let children_start = obj_index + 1;
     tree.tok_desc.push(EMPTY_RANGE);
@@ -560,6 +572,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.assert_lengths();
     assert_eq!(tree.contents[*cursor], b'[');
     let array_index = tree.tok_kind.len();
+    tree.tok_term.push(array_index as u32);
     tree.tok_kind.push(Token::Array);
     tree.tok_span.push(*cursor..*cursor);
     let children_start = array_index + 1;
@@ -695,6 +708,10 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
                 tree.tok_desc[key_index].start + 1
             )
         );
+        assert!(key_index as u32 <= tree.tok_term[i]);
+        if tree.tok_next[key_index] == 0 {
+            assert_eq!(tree.tok_term[key_index], tree.tok_term[i]);
+        }
         key_index = tree.tok_next[key_index] as usize;
         found_count += 1;
     }
@@ -734,6 +751,10 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
             value_index < next_value_index || next_value_index == 0,
             "value index should be less than next value index"
         );
+        assert!(value_index as u32 <= tree.tok_term[i]);
+        if next_value_index == 0 {
+            assert_eq!(tree.tok_term[value_index], tree.tok_term[i]);
+        }
         value_index = next_value_index;
         found_count += 1;
     }
@@ -790,11 +811,11 @@ pub fn assert_tree_valid(tree: &JsonAst) {
 
 #[derive(Debug)]
 pub struct Node<'a> {
-    kind: Token,
-    meta: u32,
-    span: Range<usize>,
-    desc: Range<usize>,
-    value: &'a str,
+    pub kind: Token,
+    pub meta: u32,
+    pub span: Range<usize>,
+    pub desc: Range<usize>,
+    pub value: &'a str,
 }
 
 impl<'a> Node<'a> {
@@ -1286,6 +1307,7 @@ pub fn insert_index(
                     tok_desc: vec![EMPTY_RANGE],
                     tok_kind: vec![source_token_kind],
                     tok_meta: vec![source_token_meta],
+                    tok_term: vec![todo!()],
                     comments: vec![],
                     contents: source_contents.into_bytes(),
                 }
@@ -1324,6 +1346,7 @@ pub fn insert_index(
                 tok_kind: vec![Token::String],
                 tok_meta: vec![0],
                 tok_span: vec![0..key_len],
+                tok_term: vec![todo!()],
                 comments: vec![],
                 contents: source_contents.into_bytes(),
             };
