@@ -2,6 +2,7 @@
 #![feature(unsigned_signed_diff)]
 
 pub use serde_json;
+use serde_json::value;
 use std::{fmt::Display, hash::Hasher, ops::Range};
 
 const NUM_NEGATIVE: u32 = 1 << 0;
@@ -544,6 +545,9 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         parse_value(tree, cursor)?;
         // key descendant range is the value range
         tree.tok_desc[key_index] = value_index..tree.next_index();
+        let value_term = tree.tok_term[value_index];
+        tree.tok_term[key_index] = value_term;
+        tree.tok_term[obj_index] = value_term;
 
         let eof = parse_any_ignore_maybe(tree, cursor)?;
         if eof {
@@ -597,6 +601,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         let value_index = tree.next_index();
         parse_value(tree, cursor)?;
         tree.tok_next[value_index_prev] = value_index as u32;
+        tree.tok_term[array_index] = tree.tok_term[value_index];
         value_index_prev = value_index;
         value_count += 1;
 
