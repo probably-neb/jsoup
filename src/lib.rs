@@ -113,11 +113,15 @@ pub enum ParseError {
     InvalidNumber,
     InvalidBoolean,
     InvalidNull,
+    TODOCannotParseNonContainerRoot,
 }
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ParseError::TODOCannotParseNonContainerRoot => {
+                write!(f, "TODO: Parsing non container root")
+            }
             ParseError::UnexpectedToken(token) => write!(f, "Unexpected token '{}'", token),
             ParseError::UnexpectedEndOfInput => write!(f, "Unexpected end of input"),
             ParseError::InvalidNumber => write!(f, "Invalid number"),
@@ -130,6 +134,7 @@ impl Display for ParseError {
 impl std::error::Error for ParseError {
     fn description(&self) -> &str {
         match self {
+            ParseError::TODOCannotParseNonContainerRoot => "Not implemented",
             ParseError::UnexpectedToken(_) => "Unexpected token",
             ParseError::UnexpectedEndOfInput => "Unexpected end of input",
             ParseError::InvalidNumber => "Invalid number",
@@ -185,7 +190,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         let res = match tree.contents[cursor] {
             b'[' => parse_array(&mut tree, &mut cursor),
             b'{' => parse_object(&mut tree, &mut cursor),
-            _ => Err(ParseError::UnexpectedToken(tree.contents[cursor] as char)),
+            _ => Err(ParseError::TODOCannotParseNonContainerRoot),
         };
 
         tree.assert_lengths();
@@ -973,8 +978,9 @@ pub fn replace_index(
     let source_is_container =
         source_token_type == Token::Object || source_token_type == Token::Array;
 
+    let target_is_key = is_object_key(tree, target_index);
     // if replacing key, make sure replacement is string as well
-    if is_object_key(tree, target_index) && source_token_type != Token::String {
+    if target_is_key && source_token_type != Token::String {
         return Err(ReplaceError::KeyMustBeString);
     }
 
@@ -988,7 +994,11 @@ pub fn replace_index(
     let target_content_range;
 
     if !source_is_container {
-        target_replacement_range = tree.tok_desc[target_index].clone();
+        target_replacement_range = if is_object_key(tree, target_index) {
+            EMPTY_RANGE
+        } else {
+            tree.tok_desc[target_index].clone()
+        };
 
         source_insertion_range = target_index..target_index + 1;
         target_content_range = tree.tok_span[target_index].clone();
@@ -1001,9 +1011,7 @@ pub fn replace_index(
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
-        if is_object_key(tree, target_index) {
-            tree.tok_desc[target_index].end = target_index + 1;
-        } else {
+        if !target_is_key {
             tree.tok_desc[target_index] = EMPTY_RANGE;
         }
 
@@ -1853,12 +1861,15 @@ mod test {
                 .expect("index found");
 
             replace_index(&mut tree, index, &source).expect("replace failed");
+
+            // todo! parsing non container root
+            match parse(&expected) {
+                Ok(expected_tree) => pretty_assertions::assert_eq!(&tree, &expected_tree),
+                Err(ParseError::TODOCannotParseNonContainerRoot) => {}
+                Err(err) => panic!("{err}"),
+            }
+
             assert_tree_valid(&tree);
-
-            let new_contents =
-                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
-
-            assert_eq!(new_contents, expected);
         }
 
         #[test]
@@ -1884,6 +1895,26 @@ mod test {
                 json!({"sub_key": "sub_value"}),
                 r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#,
             );
+        }
+
+        #[test]
+        fn obj_key() {
+            check(
+                r#"{<"key">: "value"}"#,
+                json!("new_key"),
+                r#"{"new_key": "value"}"#,
+            );
+            check(
+                r#"{"a": 1, <"b">: 2, "c": 3}"#,
+                json!("d"),
+                r#"{"a": 1, "d": 2, "c": 3}"#,
+            );
+            check(
+                r#"{"":<{"":null,"\u0000":null}>,"\u0001":{"":""}}"#,
+                json!(""),
+                r#"{"":"","\u0001":{"":""}}"#,
+            );
+            // todo! more tests
         }
 
         #[test]

@@ -38,7 +38,7 @@ fuzz_target!(|data: ReplaceDef| {
 
     let mut tree = contents;
 
-    let did_replace = jsoup::replace_index(&mut tree, index, &value);
+    let did_replace = jsoup::replace_index(&mut tree, index, &value).is_ok();
     // should never make a valid tree invalid
     jsoup::assert_tree_valid(&tree);
     if !did_replace {
