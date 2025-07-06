@@ -1538,11 +1538,15 @@ pub fn insert_index(
 
 #[derive(Debug, Clone, Copy)]
 pub enum RemoveError {
+    CannotRemoveRoot,
     InvalidIndex,
     InvalidTree,
 }
 
 pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), RemoveError> {
+    if index == 0 {
+        return Err(RemoveError::CannotRemoveRoot);
+    }
     if index >= tree.next_index() {
         return Err(RemoveError::InvalidIndex);
     }
@@ -1561,7 +1565,10 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     let token_removal_range = index..usize::max(tree.tok_desc[index].end, index + 1);
     let mut contents_removal_range = tree.tok_span[index].clone();
 
-    if let Some(descendants_start) = Some(tree.tok_desc[index].start).filter(|&n| n != 0) {
+    if let Some(descendants_start) = is_object_key(tree, index)
+        .then_some(tree.tok_desc[index].start)
+        .filter(|&n| n != 0)
+    {
         contents_removal_range.end = tree.tok_span[descendants_start].end;
     }
 
@@ -1570,7 +1577,11 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     if let Some(tok_next) = Some(tree.tok_next[index]).filter(|&n| n != 0) {
         contents_removal_range.end = tree.tok_span[tok_next as usize].start;
     } else if let Some(tok_prev) = prev_sibling_index {
-        let prev_end = tree.tok_span[tok_prev].end;
+        let prev_end = if is_object_key(tree, tok_prev) {
+            tree.tok_span[tree.tok_desc[tok_prev].end - 1].end
+        } else {
+            tree.tok_span[tok_prev].end
+        };
         let str = std::str::from_utf8(&tree.contents[prev_end..])
             .ok()
             .ok_or(RemoveError::InvalidTree)?;
@@ -1614,6 +1625,12 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     for tok_span in &mut tree.tok_span[token_removal_range.start..] {
         tok_span.start -= diff_contents;
         tok_span.end -= diff_contents;
+    }
+
+    for tok_next in &mut tree.tok_next[..token_removal_range.start] {
+        if *tok_next > token_removal_range.start as u32 {
+            *tok_next -= diff_token as u32;
+        }
     }
 
     for tok_next in &mut tree.tok_next[token_removal_range.start..] {
@@ -2164,28 +2181,39 @@ mod test {
         }
 
         #[test]
-        fn remove() {
+        fn arr_value() {
             check("[<1>]", "[]");
-            check(r#"{<"key">: "value"}"#, "{}");
             check("[1, <0>, 2]", "[1, 2]");
+            check(r#"{"foo": [1,2,<3>,]}"#, r#"{"foo": [1,2,]}"#);
             check("[<0>, 1, 2]", "[1, 2]");
+            check(r#"[<[""]>]"#, r#"[]"#);
+            check(r#"[0,[<1>],3]"#, r#"[0,[],3]"#);
+        }
+
+        #[test]
+        fn obj_key() {
+            check(r#"{<"key">: "value"}"#, "{}");
             check(
                 r#"{"foo": "bar", <"baz">: "qux", "qal": "qud"}"#,
                 r#"{"foo": "bar", "qal": "qud"}"#,
             );
             check(
-                r#"{"foo": <"bar">, "baz": "quz"}"#,
-                r#"{"foo": null, "baz": "quz"}"#,
-            );
-            check(
                 r#"{"foo": {"bar": {<"qux">: "qal"}}}"#,
                 r#"{"foo": {"bar": {}}}"#,
             );
+            check(r#"{"a":[1,2,3],<"b">:""}"#, r#"{"a":[1,2,3]}"#);
+        }
+
+        #[test]
+        fn obj_value() {
             check(
                 r#"{"foo": {"bar": <{"qux": "qal"}>}}"#,
                 r#"{"foo": {"bar": null}}"#,
             );
-            check(r#"{"foo": [1,2,<3>,]}"#, r#"{"foo": [1,2,]}"#)
+            check(
+                r#"{"foo": <"bar">, "baz": "quz"}"#,
+                r#"{"foo": null, "baz": "quz"}"#,
+            );
         }
     }
 }
