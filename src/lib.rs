@@ -1034,11 +1034,13 @@ pub fn replace_index(
         tree.tok_next.drain(target_replacement_range.clone());
         tree.tok_span.drain(target_replacement_range.clone());
         tree.tok_desc.drain(target_replacement_range.clone());
+        tree.tok_term.drain(target_replacement_range.clone());
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
         if !target_is_key {
             tree.tok_desc[target_index] = EMPTY_RANGE;
+            tree.tok_term[target_index] = target_index as u32;
         }
 
         tree.tok_span[target_index].end = target_content_range.start + source_contents.len();
@@ -1077,6 +1079,9 @@ pub fn replace_index(
             child_range.start += offset_token;
             child_range.end += offset_token;
         }
+        for tok_term in &mut source_tree.tok_term {
+            *tok_term += offset_token as u32;
+        }
         for comment in &mut source_tree.comments {
             comment.start += offset_content;
             comment.end += offset_content;
@@ -1096,6 +1101,8 @@ pub fn replace_index(
             .splice(target_replacement_range.clone(), source_tree.tok_meta);
         tree.tok_next
             .splice(target_replacement_range.clone(), source_tree.tok_next);
+        tree.tok_term
+            .splice(target_replacement_range.clone(), source_tree.tok_term);
         tree.contents
             .splice(target_content_range.clone(), source_tree.contents);
 
@@ -1134,6 +1141,14 @@ pub fn replace_index(
             if tok_desc.start > source_insertion_range.start {
                 add_signed_range(tok_desc, tok_diff);
             }
+        }
+        for tok_term in &mut tree.tok_term[0..source_insertion_range.start] {
+            if *tok_term >= source_insertion_range.start as u32 {
+                add_signed_u32(tok_term, tok_diff);
+            }
+        }
+        for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
+            add_signed_u32(tok_term, tok_diff);
         }
     }
 
@@ -1914,6 +1929,7 @@ mod test {
     mod replace {
         use super::*;
 
+        #[track_caller]
         fn check(target: &str, source: serde_json::Value, expected: &str) {
             let (target, item_range) = extract_delimited(target);
 
@@ -1976,9 +1992,9 @@ mod test {
                 r#"{"a": 1, "d": 2, "c": 3}"#,
             );
             check(
-                r#"{"":<{"":null,"\u0000":null}>,"\u0001":{"":""}}"#,
+                r#"{"a":<{"a":null,"b":null}>,"b":{"":""}}"#,
                 json!(""),
-                r#"{"":"","\u0001":{"":""}}"#,
+                r#"{"a":"","b":{"":""}}"#,
             );
             // todo! more tests
         }
