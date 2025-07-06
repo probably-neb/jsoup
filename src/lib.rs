@@ -953,11 +953,18 @@ pub enum ReplaceTarget {
     Value,
 }
 
+#[derive(Debug)]
+pub enum ReplaceError {
+    KeyMustBeString,
+    NewValueSerializationFailure,
+    InvalidPath,
+}
+
 pub fn replace_index(
     tree: &mut JsonAst,
     target_index: usize,
     source_value: &serde_json::Value,
-) -> bool {
+) -> Result<(), ReplaceError> {
     let target_token_type = tree.tok_kind[target_index];
     let source_token_type = Token::from_value(source_value);
 
@@ -968,12 +975,12 @@ pub fn replace_index(
 
     // if replacing key, make sure replacement is string as well
     if is_object_key(tree, target_index) && source_token_type != Token::String {
-        return false;
+        return Err(ReplaceError::KeyMustBeString);
     }
 
     let Ok(source_contents) = serde_json::to_string(source_value) else {
         // todo! error here?
-        return false;
+        return Err(ReplaceError::NewValueSerializationFailure);
     };
 
     let target_replacement_range;
@@ -1146,7 +1153,7 @@ pub fn replace_index(
         }
     };
 
-    return true;
+    return Ok(());
 }
 
 pub fn replace_path(
@@ -1154,12 +1161,12 @@ pub fn replace_path(
     path: &Path,
     source_value: &serde_json::Value,
     target: ReplaceTarget,
-) -> bool {
+) -> Result<(), ReplaceError> {
     if target == ReplaceTarget::Key && !source_value.is_string() {
-        return false;
+        return Err(ReplaceError::KeyMustBeString);
     }
     let Some(target_index) = index_for_path(tree, path, target) else {
-        return false;
+        return Err(ReplaceError::InvalidPath);
     };
 
     return replace_index(tree, target_index, source_value);
@@ -1567,7 +1574,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     let parent_index = item_parent_index(tree, index);
 
     if let Some(key_index) = parent_index.filter(|&i| is_object_key(tree, i)) {
-        if replace_index(tree, index, &serde_json::json!(null)) {
+        if replace_index(tree, index, &serde_json::json!(null)).is_ok() {
             return Ok(());
         } else {
             // todo! better error
@@ -1862,7 +1869,7 @@ mod test {
                 .position(|range| range == &item_range)
                 .expect("index found");
 
-            assert!(replace_index(&mut tree, index, &source), "replace failed");
+            replace_index(&mut tree, index, &source).expect("replace failed");
             assert_tree_valid(&tree);
 
             let new_contents =

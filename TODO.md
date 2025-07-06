@@ -9,7 +9,8 @@
   - [x] just takes index to remove
   - [x] if key remove value as well
   - [x] if value for key, then set to null?
-- [ ] Add error type for replace
+  - [ ] fuzz
+- [x] Add error type for replace
 - [ ] use `usize::signed_diff` instead of `+ positive - negative`
 - [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
 - [ ] Improve `tok_span`
@@ -42,6 +43,7 @@
     * insert values into very deeply nested value
 - [ ] Builder API for simultaneous creation of formatted JSON as well as tree
   - useful for replacement APIs
+- [ ] Cursor API for traversal
 - [ ] expore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
 - [ ] improve update efficiency
     * avoiding allocating new values as much as possible
