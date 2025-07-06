@@ -11,8 +11,7 @@
   - [x] if value for key, then set to null?
   - [ ] fuzz
 - [x] Add error type for replace
-- [ ] use `usize::signed_diff` instead of `+ positive - negative`
-- [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
+- [x] use `usize::signed_diff` instead of `+ positive - negative`
 - [ ] Improve `tok_span`
   - [ ] default to `tok_index..tok_index`
   - [ ] make updating loops just add instead of checking for `EMPTY_RANGE`
@@ -28,6 +27,7 @@
     * last item index will be `tok_desc[container_index].last_item_index`
     * to check if container is empty, check if `last_item_index == 0`
     * when container is empty, `tok_desc[container_index].end_complete == container_index + 1` so removal does not require any additional logic
+- [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
 - [?] Custom range type
     * `offset_by(usize)`
     * `impl Copy`

@@ -1073,83 +1073,51 @@ pub fn replace_index(
     // update tok_next and tok_desc
     if target_replacement_range.len() > 0 {
         let source_insertion_range = source_insertion_range.clone();
-        let tok_diff = u32::abs_diff(
-            source_insertion_range.end as u32,
-            target_replacement_range.end as u32,
-        );
-
-        let tok_diff_positive;
-        let tok_diff_negative;
-
-        if source_insertion_range.end < target_replacement_range.end {
-            tok_diff_negative = tok_diff;
-            tok_diff_positive = 0;
-        } else {
-            tok_diff_negative = 0;
-            tok_diff_positive = tok_diff;
-        }
+        let tok_diff =
+            usize::checked_signed_diff(source_insertion_range.end, target_replacement_range.end)
+                .unwrap();
 
         for tok_next in &mut tree.tok_next[0..=source_insertion_range.start] {
             if *tok_next >= target_replacement_range.end as u32 {
-                *tok_next += tok_diff_positive;
-                *tok_next -= tok_diff_negative;
+                add_signed_u32(tok_next, tok_diff);
             }
         }
         for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
             if *tok_next > target_replacement_range.end as u32 {
-                *tok_next += tok_diff_positive;
-                *tok_next -= tok_diff_negative;
+                add_signed_u32(tok_next, tok_diff);
             }
         }
 
         for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
             if tok_desc.start > source_insertion_range.start {
-                tok_desc.start += tok_diff_positive as usize;
-                tok_desc.start -= tok_diff_negative as usize;
+                add_signed(&mut tok_desc.start, tok_diff);
             }
             if tok_desc.end > source_insertion_range.start {
-                tok_desc.end += tok_diff_positive as usize;
-                tok_desc.end -= tok_diff_negative as usize;
+                add_signed(&mut tok_desc.end, tok_diff);
             }
         }
         for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
             if tok_desc.start > source_insertion_range.start {
-                tok_desc.start += tok_diff_positive as usize;
-                tok_desc.start -= tok_diff_negative as usize;
-                tok_desc.end += tok_diff_positive as usize;
-                tok_desc.end -= tok_diff_negative as usize;
+                add_signed_range(tok_desc, tok_diff);
             }
         }
     }
 
     // update tok_span
     {
-        let end_diff = usize::abs_diff(
+        let end_diff = usize::checked_signed_diff(
             target_content_range.start + source_contents.len(),
             target_content_range.end,
-        );
-
-        let end_diff_positive;
-        let end_diff_negative;
-        if target_content_range.end > target_content_range.start + source_contents.len() {
-            end_diff_positive = 0;
-            end_diff_negative = end_diff;
-        } else {
-            end_diff_positive = end_diff;
-            end_diff_negative = 0;
-        }
+        )
+        .unwrap();
 
         for range in &mut (&mut tree.tok_span)[0..source_insertion_range.start] {
             if range.end > target_content_range.end {
-                range.end -= end_diff_negative;
-                range.end += end_diff_positive;
+                add_signed(&mut range.end, end_diff);
             }
         }
         for range in &mut (&mut tree.tok_span)[source_insertion_range.end..] {
-            range.start -= end_diff_negative;
-            range.start += end_diff_positive;
-            range.end -= end_diff_negative;
-            range.end += end_diff_positive;
+            add_signed_range(range, end_diff);
         }
     };
 
@@ -1683,6 +1651,21 @@ fn tok_prev(tree: &JsonAst, item_index: usize) -> Option<usize> {
         }
     }
     return None;
+}
+
+#[inline(always)]
+fn add_signed(val: &mut usize, diff: isize) {
+    *val = usize::checked_add_signed(*val, diff).expect("overflow");
+}
+
+#[inline(always)]
+fn add_signed_u32(val: &mut u32, diff: isize) {
+    *val = u32::checked_add_signed(*val, diff as i32).expect("overflow");
+}
+
+fn add_signed_range(val: &mut Range<usize>, diff: isize) {
+    add_signed(&mut val.start, diff);
+    add_signed(&mut val.end, diff);
 }
 
 #[cfg(test)]
