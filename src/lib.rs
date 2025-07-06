@@ -1622,6 +1622,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     tree.tok_span.drain(token_removal_range.clone());
     tree.tok_next.drain(token_removal_range.clone());
     tree.tok_meta.drain(token_removal_range.clone());
+    tree.tok_term.drain(token_removal_range.clone());
     tree.contents.drain(contents_removal_range.clone());
 
     if let Some(parent_index) = parent_index.filter(|&i| !is_object_key(tree, i)) {
@@ -1637,6 +1638,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
         if tree.tok_desc[parent_index].len() == 0 {
             tree.tok_desc[parent_index] = EMPTY_RANGE;
         }
+        tree.tok_term[parent_index] -= diff_token as u32;
         if !is_object_key(tree, parent_index) {
             tree.tok_span[parent_index].end -= diff_contents;
         }
@@ -1648,6 +1650,10 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
             tok_desc.start -= diff_token;
             tok_desc.end -= diff_token;
         }
+    }
+
+    for tok_term in &mut tree.tok_term[token_removal_range.start..] {
+        *tok_term -= diff_token as u32;
     }
 
     for tok_span in &mut tree.tok_span[token_removal_range.start..] {
