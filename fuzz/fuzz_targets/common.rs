@@ -135,3 +135,41 @@ pub fn random_serde_json_value_depth(
         _ => unreachable!(),
     }
 }
+
+pub struct AnnotatedJSON(String);
+
+fn write_raw_string(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
+    f.write_str("r#\"")?;
+    f.write_str(s)?;
+    f.write_str("\"#")?;
+    Ok(())
+}
+
+// impl ToString for AnnotatedJSON {
+//     fn to_string(&self) -> String {
+//         format!("{}", self)
+//     }
+// }
+
+impl std::fmt::Display for AnnotatedJSON {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_raw_string(f, &self.0)
+    }
+}
+
+impl std::fmt::Debug for AnnotatedJSON {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_raw_string(f, &self.0)
+    }
+}
+
+pub fn annotated_json(tree: &JsonAst, index: usize) -> AnnotatedJSON {
+    let span = tree.tok_span[index].clone();
+    let mut contents = std::str::from_utf8(&tree.contents)
+        .expect("contents valid")
+        .to_string();
+
+    contents.insert(span.start, '<');
+    contents.insert(span.end + 1, '>');
+    return AnnotatedJSON(contents);
+}

@@ -36,3 +36,10 @@ path = "fuzz_targets/insert.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "remove"
+path = "fuzz_targets/remove.rs"
+test = false
+doc = false
+bench = false

@@ -9,7 +9,7 @@
   - [x] just takes index to remove
   - [x] if key remove value as well
   - [x] if value for key, then set to null?
-  - [ ] fuzz
+  - [x] fuzz
 - [x] Add error type for replace
 - [x] use `usize::signed_diff` instead of `+ positive - negative`
 - [ ] Improve `tok_span`
