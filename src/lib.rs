@@ -1021,9 +1021,9 @@ pub fn replace_index(
 
     if !source_is_container {
         target_replacement_range = if is_object_key(tree, target_index) {
-            EMPTY_RANGE
+            EMPTY_RANGE.into()
         } else {
-            tree.tok_desc[target_index].clone()
+            (target_index + 1)..(tree.tok_term[target_index] as usize + 1)
         };
 
         source_insertion_range = target_index..target_index + 1;
@@ -1055,11 +1055,7 @@ pub fn replace_index(
         let offset_content = tree.tok_span[target_index].start;
         let offset_token = target_index;
 
-        target_replacement_range = if target_is_container {
-            target_index..usize::max(target_index + 1, tree.tok_desc[target_index].end)
-        } else {
-            target_index..target_index + 1
-        };
+        target_replacement_range = target_index..tree.tok_term[target_index] as usize + 1;
         source_insertion_range = target_index..target_index + source_tree.next_index();
         target_content_range = tree.tok_span[target_index].clone();
 
@@ -1342,7 +1338,7 @@ pub fn insert_index(
                 key_len + colon_space.len() + 64, /* perf: estimate value len better */
             );
             let Ok(()) = serde_json::to_writer(
-                // safety: serde_json guaruntees it only writes valid utf8 bytes
+                // safety: serde_json guarantees it only writes valid utf8 bytes
                 unsafe { source_contents.as_mut_vec() },
                 &serde_json::Value::String(key),
             ) else {
@@ -1354,7 +1350,7 @@ pub fn insert_index(
             let key_len = source_contents.len();
             source_contents.push_str(colon_space);
             let Ok(()) = serde_json::to_writer(
-                // safety: serde_json guaruntees it only writes valid utf8 bytes
+                // safety: serde_json guarantees it only writes valid utf8 bytes
                 unsafe { source_contents.as_mut_vec() },
                 &value,
             ) else {
@@ -1423,10 +1419,9 @@ pub fn insert_index(
 
     match method {
         InsertionMethod::After => {
-            target_tok_insertion_index =
-                usize::max(tree.tok_desc[target_index].end, target_index + 1);
+            target_tok_insertion_index = tree.tok_term[target_index] as usize + 1;
             target_content_insertion_index = if is_object_key(tree, target_index) {
-                tree.tok_span[tree.tok_desc[target_index].start].end
+                tree.tok_span[tree.tok_term[target_index] as usize].end
             } else {
                 tree.tok_span[target_index].end
             };
@@ -1620,26 +1615,22 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
         }
     }
 
-    let token_removal_range = index..usize::max(tree.tok_desc[index].end, index + 1);
-    let mut contents_removal_range = tree.tok_span[index].clone();
-
-    if let Some(descendants_start) = is_object_key(tree, index)
-        .then_some(tree.tok_desc[index].start)
-        .filter(|&n| n != 0)
-    {
-        contents_removal_range.end = tree.tok_span[descendants_start].end;
-    }
+    let token_removal_range = index..tree.tok_term[index] as usize + 1;
+    let mut contents_removal_range = tree.tok_span[index].start
+        ..usize::max(
+            tree.tok_span[index].end,
+            tree.tok_span[tree.tok_term[index] as usize].end,
+        );
 
     let prev_sibling_index = tok_prev(tree, index);
 
     if let Some(tok_next) = Some(tree.tok_next[index]).filter(|&n| n != 0) {
         contents_removal_range.end = tree.tok_span[tok_next as usize].start;
     } else if let Some(tok_prev) = prev_sibling_index {
-        let prev_end = if is_object_key(tree, tok_prev) {
-            tree.tok_span[tree.tok_desc[tok_prev].end - 1].end
-        } else {
-            tree.tok_span[tok_prev].end
-        };
+        let prev_end = usize::max(
+            tree.tok_span[tok_prev].end,
+            tree.tok_span[tree.tok_term[tok_prev] as usize].end,
+        );
         let str = std::str::from_utf8(&tree.contents[prev_end..])
             .ok()
             .ok_or(RemoveError::InvalidTree)?;
@@ -1716,7 +1707,7 @@ fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
     while cur_index > 0 {
         if tree.tok_next[cur_index] as usize == item_index {
             item_index = cur_index;
-        } else if tree.tok_desc[cur_index].start == item_index {
+        } else if cur_index + 1 == item_index && tree.tok_term[cur_index] >= item_index as u32 {
             return Some(cur_index);
         }
         cur_index -= 1;
@@ -1808,6 +1799,8 @@ mod test {
         check("<[$3$]>");
         check("<[1,2,$3$,4,5]>");
         check("[[[<[1,2,$3$,4,5]>]]]");
+        check("[<[$[]$, 1]>, 2]");
+        check("<[$[[], 1]$, 2]>");
     }
 
     mod iter {
