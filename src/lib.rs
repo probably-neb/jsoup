@@ -2052,7 +2052,7 @@ mod test {
             pretty_assertions::assert_eq!(tree, expected_tree);
         }
 
-        // #[track_caller]
+        #[track_caller]
         fn check_fail(
             target: &str,
             insertion_method: InsertionMethod,
@@ -2081,141 +2081,247 @@ mod test {
             assert_eq!(new_contents, &target);
         }
 
-        #[test]
-        fn array() {
-            check(r#"[1, <2>, 4]"#, After, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
-            check(r#"[<1>]"#, After, Arr(json!(2)), r#"[1, 2]"#);
-            check_fail(
-                r#"<[]>"#,
-                After,
-                Arr(json!(2)),
-                InsertionError::TargetIsNotItem,
-            );
-            check(
-                r#"[<{"foo":"bar"}>]"#,
-                After,
-                Arr(json!({"baz": "qux"})),
-                r#"[{"foo":"bar"}, {"baz":"qux"}]"#,
-            );
-            check_fail(
-                r#"[<null>]"#,
-                Append,
-                Arr(json!(null)),
-                InsertionError::TargetIsNotContainer,
-            );
-
-            check(
-                r#"[<{"foo":"bar"}>]"#,
-                Before,
-                Arr(json!({"baz": "qux"})),
-                r#"[{"baz":"qux"}, {"foo":"bar"}]"#,
-            );
-            check(
-                r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
-                Before,
-                Arr(json!([1, 2])),
-                r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#,
-            );
-            check(r#"[1, 2, <4>]"#, Before, Arr(json!(3)), r#"[1, 2, 3, 4]"#);
-            check(r#"[<1>, 2, 3]"#, Before, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
-            check(r#"[<1>]"#, Before, Arr(json!(0)), r#"[0, 1]"#);
-            check(r#"[0, <2>, 3]"#, Before, Arr(json!(1)), r#"[0, 1, 2, 3]"#);
-
-            check(r#"<[1, 2, 3]>"#, Prepend, Arr(json!(0)), r#"[0, 1, 2, 3]"#);
-            check(r#"<[1, 2, 3]>"#, Append, Arr(json!(4)), r#"[1, 2, 3, 4]"#);
-
-            check(r#"<[]>"#, Prepend, Arr(json!(0)), r#"[0]"#);
-            check(
-                r#"<[]>"#,
-                Prepend,
-                Arr(json!({"foo": "bar"})),
-                r#"[{"foo":"bar"}]"#,
-            );
-            check(
-                r#"[[<[]>, 1], 2]"#,
-                Prepend,
-                Arr(json!({"foo": "bar"})),
-                r#"[[[{"foo":"bar"}], 1], 2]"#,
-            );
-            check(
-                r#"[<[]>,null,null,[null]]"#,
-                Prepend,
-                Arr(json!(null)),
-                r#"[[null],null,null,[null]]"#,
-            )
+        macro_rules! check {
+            ($name:ident, $target:expr, $method:expr, $source:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check($target, $method, $source, $expected);
+                }
+            };
         }
 
-        #[test]
-        fn object() {
-            check_fail(
-                r#"{<"foo">: "bar"}"#,
-                After,
-                Arr(json!({"baz": "qux"})),
-                InsertionError::IncorrectContainerType,
-            );
-            check(
-                r#"{<"foo">: "bar"}"#,
-                After,
-                Obj(("baz", json!("qux"))),
-                r#"{"foo": "bar", "baz": "qux"}"#,
-            );
-            check(
-                r#"{<"foo">: "bar", "quz": "qua"}"#,
-                After,
-                Obj(("baz", json!("qux"))),
-                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
-            );
-            check(
-                r#"{<"foo">: "bar", "quz": "qua"}"#,
-                After,
-                Obj(("baz", json!("qux"))),
-                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
-            );
-            check_fail(
-                r#"{"": <null>}"#,
-                After,
-                Arr(json!(null)),
-                InsertionError::TargetIsNotItem,
-            );
-
-            check(
-                r#"{<"foo">: "bar", "quz": "qua"}"#,
-                Before,
-                Obj(("baz", json!("qux"))),
-                r#"{"baz": "qux", "foo": "bar", "quz": "qua"}"#,
-            );
-            check(
-                r#"{"foo": "bar", <"quz">: "qua"}"#,
-                Before,
-                Obj(("baz", json!("qux"))),
-                r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#,
-            );
-
-            check(
-                r#"<{}>"#,
-                Append,
-                Obj(("baz", json!("qux"))),
-                r#"{"baz": "qux"}"#,
-            );
-            check(
-                r#"<{}>"#,
-                Prepend,
-                Obj(("baz", json!("qux"))),
-                r#"{"baz": "qux"}"#,
-            );
-            check(
-                r#"<{}>"#,
-                Append,
-                Obj(("y\0c", json!(null))),
-                r#"{"y\u0000c": null}"#,
-            );
-            check(
-                r#"{"\n":false,"0":<{}>}"#,
-                Append,
-                Obj(("", json!({}))),
-                r#"{"\n":false,"0":{"": {}}}"#,
-            );
+        macro_rules! check_fail {
+            ($name:ident, $target:expr, $method:expr, $source:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check_fail($target, $method, $source, $expected);
+                }
+            };
         }
+
+        check!(
+            arr_nested_obj,
+            r#"[[<[]>, 1], 2]"#,
+            Prepend,
+            Arr(json!({"foo": "bar"})),
+            r#"[[[{"foo":"bar"}], 1], 2]"#
+        );
+
+        check!(
+            arr_insert_after_middle,
+            r#"[1, <2>, 4]"#,
+            After,
+            Arr(json!(3)),
+            r#"[1, 2, 3, 4]"#
+        );
+
+        check!(
+            arr_insert_after_single,
+            r#"[<1>]"#,
+            After,
+            Arr(json!(2)),
+            r#"[1, 2]"#
+        );
+
+        check_fail!(
+            arr_insert_after_empty_fail,
+            r#"<[]>"#,
+            After,
+            Arr(json!(2)),
+            InsertionError::TargetIsNotItem
+        );
+
+        check!(
+            arr_insert_after_object,
+            r#"[<{"foo":"bar"}>]"#,
+            After,
+            Arr(json!({"baz": "qux"})),
+            r#"[{"foo":"bar"}, {"baz":"qux"}]"#
+        );
+
+        check_fail!(
+            arr_append_to_null_fail,
+            r#"[<null>]"#,
+            Append,
+            Arr(json!(null)),
+            InsertionError::TargetIsNotContainer
+        );
+
+        check!(
+            arr_insert_before_object,
+            r#"[<{"foo":"bar"}>]"#,
+            Before,
+            Arr(json!({"baz": "qux"})),
+            r#"[{"baz":"qux"}, {"foo":"bar"}]"#
+        );
+
+        check!(
+            arr_insert_before_nested_array,
+            r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
+            Before,
+            Arr(json!([1, 2])),
+            r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#
+        );
+
+        check!(
+            arr_insert_before_end,
+            r#"[1, 2, <4>]"#,
+            Before,
+            Arr(json!(3)),
+            r#"[1, 2, 3, 4]"#
+        );
+
+        check!(
+            arr_insert_before_start,
+            r#"[<1>, 2, 3]"#,
+            Before,
+            Arr(json!(0)),
+            r#"[0, 1, 2, 3]"#
+        );
+
+        check!(
+            arr_insert_before_single,
+            r#"[<1>]"#,
+            Before,
+            Arr(json!(0)),
+            r#"[0, 1]"#
+        );
+
+        check!(
+            arr_insert_before_middle,
+            r#"[0, <2>, 3]"#,
+            Before,
+            Arr(json!(1)),
+            r#"[0, 1, 2, 3]"#
+        );
+
+        check!(
+            arr_prepend,
+            r#"<[1, 2, 3]>"#,
+            Prepend,
+            Arr(json!(0)),
+            r#"[0, 1, 2, 3]"#
+        );
+
+        check!(
+            arr_append,
+            r#"<[1, 2, 3]>"#,
+            Append,
+            Arr(json!(4)),
+            r#"[1, 2, 3, 4]"#
+        );
+
+        check!(
+            arr_prepend_empty,
+            r#"<[]>"#,
+            Prepend,
+            Arr(json!(0)),
+            r#"[0]"#
+        );
+
+        check!(
+            arr_prepend_object_to_empty,
+            r#"<[]>"#,
+            Prepend,
+            Arr(json!({"foo": "bar"})),
+            r#"[{"foo":"bar"}]"#
+        );
+
+        check!(
+            arr_prepend_null_to_nested,
+            r#"[<[]>,null,null,[null]]"#,
+            Prepend,
+            Arr(json!(null)),
+            r#"[[null],null,null,[null]]"#
+        );
+
+        check_fail!(
+            obj_insert_array_value_fail,
+            r#"{<"foo">: "bar"}"#,
+            After,
+            Arr(json!({"baz": "qux"})),
+            InsertionError::IncorrectContainerType
+        );
+
+        check!(
+            obj_insert_after_single,
+            r#"{<"foo">: "bar"}"#,
+            After,
+            Obj(("baz", json!("qux"))),
+            r#"{"foo": "bar", "baz": "qux"}"#
+        );
+
+        check!(
+            obj_insert_after_first,
+            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            After,
+            Obj(("baz", json!("qux"))),
+            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+        );
+
+        check!(
+            obj_insert_after_first_duplicate,
+            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            After,
+            Obj(("baz", json!("qux"))),
+            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+        );
+
+        check_fail!(
+            obj_insert_after_value_fail,
+            r#"{"": <null>}"#,
+            After,
+            Arr(json!(null)),
+            InsertionError::TargetIsNotItem
+        );
+
+        check!(
+            obj_insert_before_first,
+            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            Before,
+            Obj(("baz", json!("qux"))),
+            r#"{"baz": "qux", "foo": "bar", "quz": "qua"}"#
+        );
+
+        check!(
+            obj_insert_before_second,
+            r#"{"foo": "bar", <"quz">: "qua"}"#,
+            Before,
+            Obj(("baz", json!("qux"))),
+            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+        );
+
+        check!(
+            obj_append_empty,
+            r#"<{}>"#,
+            Append,
+            Obj(("baz", json!("qux"))),
+            r#"{"baz": "qux"}"#
+        );
+
+        check!(
+            obj_prepend_empty,
+            r#"<{}>"#,
+            Prepend,
+            Obj(("baz", json!("qux"))),
+            r#"{"baz": "qux"}"#
+        );
+
+        check!(
+            obj_append_special_chars,
+            r#"<{}>"#,
+            Append,
+            Obj(("y\0c", json!(null))),
+            r#"{"y\u0000c": null}"#
+        );
+
+        check!(
+            obj_append_empty_key,
+            r#"{"\n":false,"0":<{}>}"#,
+            Append,
+            Obj(("", json!({}))),
+            r#"{"\n":false,"0":{"": {}}}"#
+        );
     }
 
     mod remove {
