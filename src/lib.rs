@@ -1,6 +1,7 @@
 #![feature(iter_array_chunks)]
 #![feature(unsigned_signed_diff)]
 
+mod builder;
 pub use serde_json;
 use std::{fmt::Display, hash::Hasher, ops::Range};
 
