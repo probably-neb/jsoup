@@ -48,6 +48,18 @@ impl std::fmt::Debug for JsonAst {
 }
 
 impl JsonAst {
+    pub fn empty() -> Self {
+        Self {
+            contents: Vec::new(),
+            tok_span: Vec::new(),
+            tok_kind: Vec::new(),
+            tok_meta: Vec::new(),
+            tok_next: Vec::new(),
+            tok_term: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
     pub fn value_at(&self, index: usize) -> &str {
         let mut range = self.tok_span[index].clone();
         if self.tok_kind[index] == Token::String {
@@ -172,17 +184,9 @@ impl Path {
 }
 
 pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
+    let mut tree = JsonAst::empty();
     // todo! don't clone if not necessary
-    let contents = input.as_bytes().to_vec();
-    let mut tree = JsonAst {
-        contents,
-        tok_span: Vec::new(),
-        tok_kind: Vec::new(),
-        tok_meta: Vec::new(),
-        tok_next: Vec::new(),
-        tok_term: Vec::new(),
-        comments: Vec::new(),
-    };
+    tree.contents = input.as_bytes().to_vec();
 
     let mut cursor = 0;
 
