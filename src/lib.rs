@@ -846,6 +846,23 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
     );
 }
 
+fn assert_bool_valid(tree: &JsonAst, i: usize) {
+    assert!(
+        ["true", "false"].contains(&tree.value_at(i)),
+        "boolean value must be either 'true' or 'false', found '{}'",
+        tree.value_at(i)
+    );
+}
+
+fn assert_null_valid(tree: &JsonAst, i: usize) {
+    assert_eq!(
+        "null",
+        tree.value_at(i),
+        "null token must have value 'null', found '{}'",
+        tree.value_at(i)
+    );
+}
+
 pub fn assert_tree_valid(tree: &JsonAst) {
     tree.assert_lengths();
     // todo! assert all comments are
@@ -858,8 +875,8 @@ pub fn assert_tree_valid(tree: &JsonAst) {
             Token::Number => assert_number_valid(tree, i),
             Token::Object => assert_object_valid(tree, i),
             Token::Array => assert_array_valid(tree, i),
-            Token::Boolean => {}
-            Token::Null => {}
+            Token::Boolean => assert_bool_valid(tree, i),
+            Token::Null => assert_null_valid(tree, i),
         }
     }
     // todo! assert reparsing contents succeeds, and that the parsed tree is identical to the original tree
