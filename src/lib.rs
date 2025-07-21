@@ -984,7 +984,7 @@ pub enum ReplaceTarget {
     Value,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ReplaceError {
     KeyMustBeString,
     NewValueSerializationFailure,
@@ -1947,78 +1947,166 @@ mod test {
             assert_tree_valid(&tree);
         }
 
-        #[test]
-        fn obj_value() {
-            check(
-                r#"{ "key": <"value"> }"#,
-                json!("new_value"),
-                r#"{ "key": "new_value" }"#,
-            );
-            check(
-                r#"{ "key": <"value"> }"#,
-                json!(3.1459),
-                r#"{ "key": 3.1459 }"#,
-            );
-            check(r#"{ "key": <"value"> }"#, json!(-0.0), r#"{ "key": -0.0 }"#);
-            check(
-                r#"{ "key": <"value"> }"#,
-                json!([true]),
-                r#"{ "key": [true] }"#,
-            );
-            check(
-                r#"{ "key": <"value">, "key2": "value2" }"#,
-                json!({"sub_key": "sub_value"}),
-                r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#,
-            );
+        macro_rules! check {
+            ($name:ident, $target:expr, $source:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check($target, $source, $expected);
+                }
+            };
         }
 
-        #[test]
-        fn obj_key() {
-            check(
-                r#"{<"key">: "value"}"#,
-                json!("new_key"),
-                r#"{"new_key": "value"}"#,
-            );
-            check(
-                r#"{"a": 1, <"b">: 2, "c": 3}"#,
-                json!("d"),
-                r#"{"a": 1, "d": 2, "c": 3}"#,
-            );
-            check(
-                r#"{"a":<{"a":null,"b":null}>,"b":{"":""}}"#,
-                json!(""),
-                r#"{"a":"","b":{"":""}}"#,
-            );
-            // todo! more tests
+        #[track_caller]
+        fn check_fail(target: &str, source: serde_json::Value, expected_err: ReplaceError) {
+            let (target, item_range) = extract_delimited(target);
+
+            let mut tree = parse(&target).expect("parse succeeded");
+            assert_tree_valid(&tree);
+
+            let index = tree
+                .tok_span
+                .iter()
+                .position(|range| range == &item_range)
+                .expect("index found");
+
+            let err =
+                replace_index(&mut tree, index, &source).expect_err("expected replace to fail");
+            assert_eq!(err, expected_err);
+            assert_tree_valid(&tree);
+
+            let new_contents =
+                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+            assert_eq!(new_contents, &target);
         }
 
-        #[test]
-        fn obj_replace_root() {
-            check(
-                r#"<{ "key": "value", "key2": "value2" }>"#,
-                json!(true),
-                "true",
-            );
+        macro_rules! check_fail {
+            ($name:ident, $target:expr, $source:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check_fail($target, $source, $expected);
+                }
+            };
         }
 
-        #[test]
-        fn arr_value() {
-            check(
-                r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
-                json!([2]),
-                r#"[1, [2], 3, 4, 5]"#,
-            );
-            check(
-                r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
-                json!(2),
-                r#"[1, 2, 3, 4, 5]"#,
-            );
-            check(
-                r#"[<null>,{"": null},null]"#,
-                json!([{}]),
-                r#"[[{}],{"": null},null]"#,
-            );
-        }
+        check!(
+            obj_value_string,
+            r#"{ "key": <"value"> }"#,
+            json!("new_value"),
+            r#"{ "key": "new_value" }"#
+        );
+
+        check!(
+            obj_value_number,
+            r#"{ "key": <"value"> }"#,
+            json!(3.1459),
+            r#"{ "key": 3.1459 }"#
+        );
+
+        check!(
+            obj_value_negative_zero,
+            r#"{ "key": <"value"> }"#,
+            json!(-0.0),
+            r#"{ "key": -0.0 }"#
+        );
+
+        check!(
+            obj_value_array,
+            r#"{ "key": <"value"> }"#,
+            json!([true]),
+            r#"{ "key": [true] }"#
+        );
+
+        check!(
+            obj_value_nested_object,
+            r#"{ "key": <"value">, "key2": "value2" }"#,
+            json!({"sub_key": "sub_value"}),
+            r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#
+        );
+
+        check!(
+            obj_key_simple,
+            r#"{<"key">: "value"}"#,
+            json!("new_key"),
+            r#"{"new_key": "value"}"#
+        );
+
+        check!(
+            obj_key_middle,
+            r#"{"a": 1, <"b">: 2, "c": 3}"#,
+            json!("d"),
+            r#"{"a": 1, "d": 2, "c": 3}"#
+        );
+
+        check!(
+            obj_key_to_empty_string,
+            r#"{"a":<{"a":null,"b":null}>,"b":{"":""}}"#,
+            json!(""),
+            r#"{"a":"","b":{"":""}}"#
+        );
+
+        check!(
+            obj_root,
+            r#"<{ "key": "value", "key2": "value2" }>"#,
+            json!(true),
+            "true"
+        );
+
+        check!(
+            arr_value_object_to_array,
+            r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
+            json!([2]),
+            r#"[1, [2], 3, 4, 5]"#
+        );
+
+        check!(
+            arr_value_object_to_number,
+            r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
+            json!(2),
+            r#"[1, 2, 3, 4, 5]"#
+        );
+
+        check!(
+            arr_value_null_to_array,
+            r#"[<null>,{"": null},null]"#,
+            json!([{}]),
+            r#"[[{}],{"": null},null]"#
+        );
+
+        check_fail!(
+            obj_key_non_string_fail,
+            r#"{<"key">: "value"}"#,
+            json!(123),
+            ReplaceError::KeyMustBeString
+        );
+
+        check_fail!(
+            obj_key_array_fail,
+            r#"{"a": 1, <"b">: 2, "c": 3}"#,
+            json!([1, 2, 3]),
+            ReplaceError::KeyMustBeString
+        );
+
+        check_fail!(
+            obj_key_object_fail,
+            r#"{<"old_key">: "value"}"#,
+            json!({"new": "key"}),
+            ReplaceError::KeyMustBeString
+        );
+
+        check_fail!(
+            obj_key_null_fail,
+            r#"{<"key">: "value"}"#,
+            json!(null),
+            ReplaceError::KeyMustBeString
+        );
+
+        check_fail!(
+            obj_key_boolean_fail,
+            r#"{"a": 1, <"key">: 2}"#,
+            json!(true),
+            ReplaceError::KeyMustBeString
+        );
     }
 
     mod insert {
@@ -2108,7 +2196,7 @@ mod test {
         );
 
         check!(
-            arr_insert_after_middle,
+            arr_after_middle,
             r#"[1, <2>, 4]"#,
             After,
             Arr(json!(3)),
@@ -2116,7 +2204,7 @@ mod test {
         );
 
         check!(
-            arr_insert_after_single,
+            arr_after_single,
             r#"[<1>]"#,
             After,
             Arr(json!(2)),
@@ -2124,7 +2212,7 @@ mod test {
         );
 
         check_fail!(
-            arr_insert_after_empty_fail,
+            arr_after_empty_fail,
             r#"<[]>"#,
             After,
             Arr(json!(2)),
@@ -2132,7 +2220,7 @@ mod test {
         );
 
         check!(
-            arr_insert_after_object,
+            arr_after_object,
             r#"[<{"foo":"bar"}>]"#,
             After,
             Arr(json!({"baz": "qux"})),
@@ -2148,7 +2236,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_object,
+            arr_before_object,
             r#"[<{"foo":"bar"}>]"#,
             Before,
             Arr(json!({"baz": "qux"})),
@@ -2156,7 +2244,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_nested_array,
+            arr_before_nested_array,
             r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
             Before,
             Arr(json!([1, 2])),
@@ -2164,7 +2252,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_end,
+            arr_before_end,
             r#"[1, 2, <4>]"#,
             Before,
             Arr(json!(3)),
@@ -2172,7 +2260,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_start,
+            arr_before_start,
             r#"[<1>, 2, 3]"#,
             Before,
             Arr(json!(0)),
@@ -2180,7 +2268,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_single,
+            arr_before_single,
             r#"[<1>]"#,
             Before,
             Arr(json!(0)),
@@ -2188,7 +2276,7 @@ mod test {
         );
 
         check!(
-            arr_insert_before_middle,
+            arr_before_middle,
             r#"[0, <2>, 3]"#,
             Before,
             Arr(json!(1)),
@@ -2236,7 +2324,7 @@ mod test {
         );
 
         check_fail!(
-            obj_insert_array_value_fail,
+            obj_array_value_fail,
             r#"{<"foo">: "bar"}"#,
             After,
             Arr(json!({"baz": "qux"})),
@@ -2244,7 +2332,7 @@ mod test {
         );
 
         check!(
-            obj_insert_after_single,
+            obj_after_single,
             r#"{<"foo">: "bar"}"#,
             After,
             Obj(("baz", json!("qux"))),
@@ -2252,7 +2340,7 @@ mod test {
         );
 
         check!(
-            obj_insert_after_first,
+            obj_after_first,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             After,
             Obj(("baz", json!("qux"))),
@@ -2260,7 +2348,7 @@ mod test {
         );
 
         check!(
-            obj_insert_after_first_duplicate,
+            obj_after_first_duplicate,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             After,
             Obj(("baz", json!("qux"))),
@@ -2268,7 +2356,7 @@ mod test {
         );
 
         check_fail!(
-            obj_insert_after_value_fail,
+            obj_after_value_fail,
             r#"{"": <null>}"#,
             After,
             Arr(json!(null)),
@@ -2276,7 +2364,7 @@ mod test {
         );
 
         check!(
-            obj_insert_before_first,
+            obj_before_first,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             Before,
             Obj(("baz", json!("qux"))),
@@ -2284,7 +2372,7 @@ mod test {
         );
 
         check!(
-            obj_insert_before_second,
+            obj_before_second,
             r#"{"foo": "bar", <"quz">: "qua"}"#,
             Before,
             Obj(("baz", json!("qux"))),
