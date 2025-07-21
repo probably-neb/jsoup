@@ -1,6 +1,6 @@
 - [x] Replacing collections
   - [x] consolidate code paths for splicing and updating ranges
-- [*] `insert`
+- [x] `insert`
   - [x] array values
   - [x] object keys
   - [x] fuzz
@@ -12,21 +12,15 @@
   - [x] fuzz
 - [x] Add error type for replace
 - [x] use `usize::signed_diff` instead of `+ positive - negative`
-- [ ] Improve `tok_desc`
-  - [ ] default to `tok_index..tok_index`
-  - [ ] make updating loops just add instead of checking for `EMPTY_RANGE`
-  - [ ] replace instances of `usize::max(tree.tok_desc[i].end, i + 1)` with `tree.tok_desc[i].end`
-- [ ] Improve container tok range
-  - store last item index, and complete end of last item in tok_desc instead of start and end
-  - start will always be index + 1, and storing both ends avoids:
+- [x] Improve container tok range
+  - start will always be index + 1, store `term` as last index of subtree starting at index
     * recursing on end to find complete end
     * iterating over all items to find last item index
   - therefore
-    * complete subtree range will be `container_index..tok_desc[container_index].end_complete`
+    * complete subtree range will be `container_index..tok_term[container_index].end_complete`
     * first item index will be `container_index + 1`
-    * last item index will be `tok_desc[container_index].last_item_index`
     * to check if container is empty, check if `last_item_index == 0`
-    * when container is empty, `tok_desc[container_index].end_complete == container_index + 1` so removal does not require any additional logic
+    * when container is empty, `tok_term[container_index] == container_index` so removal does not require any additional logic
 - [ ] consider refactoring insert into separate functions for before, after, prepend, append instead of parameterizing
 - [?] Custom range type
     * `offset_by(usize)`

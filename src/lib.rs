@@ -13,8 +13,6 @@ pub struct JsonAst {
     pub contents: Vec<u8>,
     pub tok_span: Vec<Range<usize>>,
     pub tok_kind: Vec<Token>,
-    /// short for tok_descendants
-    pub tok_desc: Vec<Range<usize>>,
     /// short for tok_termination:
     /// the index of the last item in the subtree starting at this node
     pub tok_term: Vec<u32>,
@@ -41,7 +39,6 @@ impl std::fmt::Debug for JsonAst {
                     .collect::<Vec<_>>(),
             )
             .field("tok_kind", &self.tok_kind)
-            .field("tok_desc", &self.tok_desc)
             .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
             .field("tok_term", &self.tok_term)
@@ -73,7 +70,6 @@ impl JsonAst {
 
     fn assert_lengths(&self) {
         assert_eq!(self.tok_span.len(), self.tok_kind.len());
-        assert_eq!(self.tok_span.len(), self.tok_desc.len());
         assert_eq!(self.tok_span.len(), self.tok_meta.len());
         assert_eq!(self.tok_span.len(), self.tok_next.len());
         assert_eq!(self.tok_span.len(), self.tok_term.len());
@@ -182,7 +178,6 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
         contents,
         tok_span: Vec::new(),
         tok_kind: Vec::new(),
-        tok_desc: Vec::new(),
         tok_meta: Vec::new(),
         tok_next: Vec::new(),
         tok_term: Vec::new(),
@@ -311,7 +306,6 @@ fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     tree.tok_span.push(*cursor..*cursor + 4);
     *cursor += 4;
     tree.tok_kind.push(Token::Null);
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
@@ -329,7 +323,6 @@ fn parse_true(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     tree.tok_span.push(*cursor..*cursor + 4);
     *cursor += 4;
     tree.tok_kind.push(Token::Boolean);
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
@@ -348,7 +341,6 @@ fn parse_false(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_span.push(*cursor..*cursor + 5);
     *cursor += 5;
     tree.tok_kind.push(Token::Boolean);
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_meta.push(0);
     tree.tok_next.push(0);
     Ok(())
@@ -378,7 +370,6 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 tree.tok_term.push(tree.next_index() as u32);
                 tree.tok_span.push(range);
                 tree.tok_kind.push(Token::String);
-                tree.tok_desc.push(EMPTY_RANGE);
                 tree.tok_meta.push(0);
                 tree.tok_next.push(0);
                 return Ok(());
@@ -461,7 +452,6 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     tree.tok_term.push(tree.next_index() as u32);
     tree.tok_span.push(start..*cursor);
     tree.tok_kind.push(Token::Number);
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_meta.push(meta);
     tree.tok_next.push(0);
     Ok(())
@@ -496,8 +486,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     let obj_index = tree.next_index();
     tree.tok_term.push(obj_index as u32);
     tree.tok_span.push(*cursor..*cursor);
-    let children_start = obj_index + 1;
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_kind.push(Token::Object);
     tree.tok_meta.push(0);
     tree.tok_next.push(0);
@@ -543,7 +531,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         let value_index = tree.next_index();
         parse_value(tree, cursor)?;
         // key descendant range is the value range
-        tree.tok_desc[key_index] = value_index..tree.next_index();
         let value_term = tree.tok_term[value_index];
         tree.tok_term[key_index] = value_term;
         tree.tok_term[obj_index] = value_term;
@@ -564,9 +551,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 
     tree.tok_meta[obj_index] = key_count;
 
-    if tree.next_index() > children_start {
-        tree.tok_desc[obj_index] = children_start..tree.next_index();
-    }
     tree.tok_span[obj_index].end = *cursor;
     return Ok(());
 }
@@ -578,8 +562,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_term.push(array_index as u32);
     tree.tok_kind.push(Token::Array);
     tree.tok_span.push(*cursor..*cursor);
-    let children_start = array_index + 1;
-    tree.tok_desc.push(EMPTY_RANGE);
     tree.tok_next.push(0);
     tree.tok_meta.push(0);
 
@@ -618,9 +600,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     tree.tok_next[array_index] = 0;
 
     tree.tok_meta[array_index] = value_count;
-    if tree.next_index() > children_start {
-        tree.tok_desc[array_index] = children_start..tree.next_index();
-    }
     tree.tok_span[array_index].end = *cursor;
     return Ok(());
 }
@@ -631,10 +610,6 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         is_start_of_number(tree.contents[range.start]),
         "number must start with a digit or '-', found '{}'",
         tree.contents[range.start] as char
-    );
-    assert_eq!(
-        tree.tok_desc[i], EMPTY_RANGE,
-        "number tokens should have empty descriptor range"
     );
 
     let is_negative_sign = tree.contents[range.start] == b'-';
@@ -741,7 +716,7 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
 
     let expected_count = tree.tok_meta[i];
     let mut found_count = 0;
-    let mut key_index = tree.tok_desc[i].start;
+    let mut key_index = container_first_item_index(tree, i);
     while key_index != 0 {
         assert_eq!(
             Token::String,
@@ -751,18 +726,6 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
         assert_eq!(
             0, tree.tok_meta[key_index],
             "object key should have metadata value of 0"
-        );
-        assert_ne!(
-            0,
-            tree.tok_desc[key_index].len(),
-            "object key should have non-zero descriptor length"
-        );
-        assert_eq!(
-            tree.tok_desc[key_index].end,
-            usize::max(
-                tree.tok_desc[tree.tok_desc[key_index].start].end,
-                tree.tok_desc[key_index].start + 1
-            )
         );
         assert!(
             key_index as u32 <= tree.tok_term[i],
@@ -811,7 +774,7 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
 
     let expected_count = tree.tok_meta[i];
     let mut found_count = 0;
-    let mut value_index = tree.tok_desc[i].start;
+    let mut value_index = container_first_item_index(tree, i);
     while value_index != 0 {
         let next_value_index = tree.tok_next[value_index] as usize;
         assert!(
@@ -896,12 +859,6 @@ pub fn assert_tree_valid(tree: &JsonAst) {
                     "tok next {i} and {j} are the same"
                 );
             }
-            if tree.tok_desc[i] != EMPTY_RANGE {
-                assert_ne!(
-                    tree.tok_desc[i], tree.tok_desc[j],
-                    "tok desc {i} and {j} are the same"
-                );
-            }
         }
     }
 }
@@ -911,7 +868,6 @@ pub struct Node<'a> {
     pub kind: Token,
     pub meta: u32,
     pub span: Range<usize>,
-    pub desc: Range<usize>,
     pub value: &'a str,
 }
 
@@ -921,7 +877,6 @@ impl<'a> Node<'a> {
             kind: tree.tok_kind[index],
             meta: tree.tok_meta[index],
             span: tree.tok_span[index].clone(),
-            desc: tree.tok_desc[index].clone(),
             value: tree.value_for_char_range(&tree.tok_span[index]),
         };
     }
@@ -935,7 +890,7 @@ pub struct ObjectItemIter<'a> {
 impl<'a> ObjectItemIter<'a> {
     pub fn new(tree: &'a JsonAst, obj_index: usize) -> Self {
         assert_eq!(tree.tok_kind[obj_index], Token::Object);
-        let key_index = tree.tok_desc[obj_index].start;
+        let key_index = container_first_item_index(tree, obj_index);
         ObjectItemIter { tree, key_index }
     }
 }
@@ -948,9 +903,7 @@ impl<'a> Iterator for ObjectItemIter<'a> {
             return None;
         }
 
-        let value_range = &self.tree.tok_desc[self.key_index];
-        assert_eq!(value_range.len(), 1);
-        let value_index = value_range.start;
+        let value_index = container_first_item_index(self.tree, self.key_index);
         let key_index = self.key_index;
         self.key_index = self.tree.tok_next[self.key_index] as usize;
         Some((key_index, value_index))
@@ -985,14 +938,16 @@ impl<'a> Iterator for ArrayItemIter<'a> {
     }
 }
 
-/// Will be zero if array is empty
-/// todo! inline
-fn container_first_item_index(tree: &JsonAst, array_index: usize) -> usize {
-    assert!(matches!(
-        tree.tok_kind[array_index],
-        Token::Array | Token::Object
-    ));
-    let next_index = tree.tok_desc[array_index].start;
+/// Will be zero if container is empty
+fn container_first_item_index(tree: &JsonAst, index: usize) -> usize {
+    assert!(
+        matches!(tree.tok_kind[index], Token::Array | Token::Object) || is_object_key(tree, index)
+    );
+    let next_index = if index + 1 <= tree.tok_term[index] as usize {
+        index + 1
+    } else {
+        0
+    };
     next_index
 }
 
@@ -1044,7 +999,8 @@ pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
 }
 
 pub fn is_object_key(tree: &JsonAst, target_index: usize) -> bool {
-    tree.tok_kind[target_index] == Token::String && tree.tok_desc[target_index].len() > 0
+    tree.tok_kind[target_index] == Token::String
+        && tree.tok_term[target_index] > target_index as u32
 }
 
 pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
@@ -1125,13 +1081,11 @@ pub fn replace_index(
         tree.tok_kind.drain(target_replacement_range.clone());
         tree.tok_next.drain(target_replacement_range.clone());
         tree.tok_span.drain(target_replacement_range.clone());
-        tree.tok_desc.drain(target_replacement_range.clone());
         tree.tok_term.drain(target_replacement_range.clone());
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
         if !target_is_key {
-            tree.tok_desc[target_index] = EMPTY_RANGE;
             tree.tok_term[target_index] = target_index as u32;
         }
 
@@ -1160,13 +1114,6 @@ pub fn replace_index(
             range.start += offset_content;
             range.end += offset_content;
         }
-        for child_range in &mut source_tree.tok_desc {
-            if child_range.start == 0 && child_range.end == 0 {
-                continue;
-            }
-            child_range.start += offset_token;
-            child_range.end += offset_token;
-        }
         for tok_term in &mut source_tree.tok_term {
             *tok_term += offset_token as u32;
         }
@@ -1179,8 +1126,6 @@ pub fn replace_index(
 
         tree.comments.append(&mut source_tree.comments);
         tree.comments.sort_by_key(|r| (r.start, r.end));
-        tree.tok_desc
-            .splice(target_replacement_range.clone(), source_tree.tok_desc);
         tree.tok_kind
             .splice(target_replacement_range.clone(), source_tree.tok_kind);
         tree.tok_span
@@ -1199,7 +1144,7 @@ pub fn replace_index(
         }
     }
 
-    // update tok_next and tok_desc
+    // update tok_next
     if target_replacement_range.len() > 0 {
         let source_insertion_range = source_insertion_range.clone();
         let tok_diff =
@@ -1217,19 +1162,6 @@ pub fn replace_index(
             }
         }
 
-        for tok_desc in &mut tree.tok_desc[0..source_insertion_range.start] {
-            if tok_desc.start > source_insertion_range.start {
-                add_signed(&mut tok_desc.start, tok_diff);
-            }
-            if tok_desc.end > source_insertion_range.start {
-                add_signed(&mut tok_desc.end, tok_diff);
-            }
-        }
-        for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-            if tok_desc.start > source_insertion_range.start {
-                add_signed_range(tok_desc, tok_diff);
-            }
-        }
         for tok_term in &mut tree.tok_term[0..source_insertion_range.start] {
             if *tok_term >= source_insertion_range.start as u32 {
                 add_signed_u32(tok_term, tok_diff);
@@ -1412,7 +1344,6 @@ pub fn insert_index(
                 JsonAst {
                     tok_span: vec![0..source_contents.len()],
                     tok_next: vec![0],
-                    tok_desc: vec![EMPTY_RANGE],
                     tok_kind: vec![source_token_kind],
                     tok_meta: vec![source_token_meta],
                     tok_term: vec![0],
@@ -1450,7 +1381,6 @@ pub fn insert_index(
             };
             let mut source_tree = JsonAst {
                 tok_next: vec![0],
-                tok_desc: vec![1..1],
                 tok_kind: vec![Token::String],
                 tok_meta: vec![0],
                 tok_span: vec![0..key_len],
@@ -1462,7 +1392,6 @@ pub fn insert_index(
             let Ok(()) = parse_value(&mut source_tree, &mut cursor) else {
                 return Err(InsertionError::FailedToSerializeValue);
             };
-            source_tree.tok_desc[0].end = source_tree.next_index();
             source_tree.tok_term[0] = source_tree.tok_term[1];
             source_tree
         }
@@ -1470,7 +1399,7 @@ pub fn insert_index(
 
     let (method, target_index) = match method {
         InsertionMethod::Before | InsertionMethod::After => (method, target_index),
-        InsertionMethod::Prepend => match tree.tok_desc[target_index] == EMPTY_RANGE {
+        InsertionMethod::Prepend => match tree.tok_term[target_index] == target_index as u32 {
             true => (InsertionMethod::Prepend, target_index),
             false => (
                 InsertionMethod::Before,
@@ -1480,7 +1409,7 @@ pub fn insert_index(
                 },
             ),
         },
-        InsertionMethod::Append => match tree.tok_desc[target_index] == EMPTY_RANGE {
+        InsertionMethod::Append => match tree.tok_term[target_index] == target_index as u32 {
             true => (InsertionMethod::Append, target_index),
             false => (
                 InsertionMethod::After,
@@ -1545,8 +1474,6 @@ pub fn insert_index(
             content_slices = [source_tree.contents.as_slice(), b""];
             source_content_offset = 0;
             source_tok_next = 0;
-
-            tree.tok_desc[target_index] = target_tok_insertion_index..target_tok_insertion_index;
         }
     };
 
@@ -1567,10 +1494,6 @@ pub fn insert_index(
     tree.tok_next.splice(
         target_tok_insertion_index..target_tok_insertion_index,
         source_tree.tok_next,
-    );
-    tree.tok_desc.splice(
-        target_tok_insertion_index..target_tok_insertion_index,
-        source_tree.tok_desc,
     );
     tree.tok_span.splice(
         target_tok_insertion_index..target_tok_insertion_index,
@@ -1627,30 +1550,11 @@ pub fn insert_index(
     // we are inserting into
     let mut container_index = Some(target_container_index);
     while let Some(outer_container_index) = container_index {
-        tree.tok_desc[outer_container_index].end += diff_token;
         tree.tok_term[outer_container_index] += diff_token as u32;
         if !is_object_key(tree, outer_container_index) {
             tree.tok_span[outer_container_index].end += diff_content;
         }
         container_index = item_parent_index(tree, outer_container_index);
-    }
-
-    // all tokens within the insertion range need to have their descendant and content ranges
-    // offset by the start of the insertion range
-    for tok_desc in &mut tree.tok_desc[source_insertion_range.clone()] {
-        if *tok_desc != EMPTY_RANGE {
-            tok_desc.start += source_insertion_range.start;
-            tok_desc.end += source_insertion_range.start;
-        }
-    }
-
-    // all tokens after the insertion range need to have their descendant and content ranges
-    // offset by the difference in token length
-    for tok_desc in &mut tree.tok_desc[source_insertion_range.end..] {
-        if *tok_desc != EMPTY_RANGE {
-            tok_desc.start += diff_token;
-            tok_desc.end += diff_token;
-        }
     }
 
     for tok_term in &mut tree.tok_term[source_insertion_range.clone()] {
@@ -1730,7 +1634,6 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
         tree.tok_next[tok_prev] = tree.tok_next[index];
     }
 
-    tree.tok_desc.drain(token_removal_range.clone());
     tree.tok_kind.drain(token_removal_range.clone());
     tree.tok_span.drain(token_removal_range.clone());
     tree.tok_next.drain(token_removal_range.clone());
@@ -1747,22 +1650,11 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
 
     let mut ancestor_index = parent_index;
     while let Some(parent_index) = ancestor_index {
-        tree.tok_desc[parent_index].end -= diff_token;
-        if tree.tok_desc[parent_index].len() == 0 {
-            tree.tok_desc[parent_index] = EMPTY_RANGE;
-        }
         tree.tok_term[parent_index] -= diff_token as u32;
         if !is_object_key(tree, parent_index) {
             tree.tok_span[parent_index].end -= diff_contents;
         }
         ancestor_index = item_parent_index(tree, parent_index);
-    }
-
-    for tok_desc in &mut tree.tok_desc[token_removal_range.start..] {
-        if *tok_desc != EMPTY_RANGE {
-            tok_desc.start -= diff_token;
-            tok_desc.end -= diff_token;
-        }
     }
 
     for tok_term in &mut tree.tok_term[token_removal_range.start..] {
@@ -1804,7 +1696,7 @@ fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
         }
         cur_index -= 1;
     }
-    if tree.tok_desc[cur_index].start == item_index && item_index != 0 {
+    if cur_index + 1 == item_index {
         return Some(cur_index);
     }
 
@@ -1999,7 +1891,7 @@ mod test {
             check(r#"{"parent": true, "child": <{}>}"#);
             check(r#"[<{}>]"#);
             check(r#"[1, 2, 3, 4, 5, <{$"a"$: $1$, $"b"$: $2$ }>, 6, 7, 8]"#);
-            // todo! llm generate more tests
+            // todo! LLM generate more tests
         }
 
         #[test]
@@ -2007,7 +1899,7 @@ mod test {
             check(r#"<[]>"#);
             check(r#"<[$1$]>"#);
             check(r#"<[${}$, ${}$,     ${}$]>"#);
-            // todo! llm generate more tests
+            // todo! LLM generate more tests
         }
     }
 

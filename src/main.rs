@@ -20,7 +20,7 @@ fn main() -> Result<(), jsoup::ParseError> {
         .tok_kind
         .iter()
         .zip(tree.tok_span.iter())
-        .zip(tree.tok_desc.iter())
+        .zip(tree.tok_term.iter())
         .enumerate()
     {
         println!(
