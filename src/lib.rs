@@ -635,14 +635,9 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         count(value, b'.')
     );
     assert!(
-        count(value, b'e') <= 1,
-        "number can have at most one 'e' for exponent, found {}",
-        count(value, b'e')
-    );
-    assert!(
-        count(value, b'E') <= 1,
-        "number can have at most one 'E' for exponent, found {}",
-        count(value, b'E')
+        count(value, b'E') + count(value, b'e') <= 1,
+        "number can have at most one 'E' or 'e' for exponent, found {}",
+        count(value, b'E') + count(value, b'e')
     );
     assert!(
         count(value, b'-') <= 2,
@@ -655,7 +650,7 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         count(value, b'+')
     );
 
-    let is_float_scientific = u32::max(count(value, b'e'), count(value, b'E')) != 0;
+    let is_float_scientific = (count(value, b'e') + count(value, b'E')) == 1;
     let is_float_frac = count(value, b'.') != 0;
     let is_float = is_float_scientific || is_float_frac;
     let is_float_extra = tree.tok_meta[i] & NUM_FLOAT != 0;
