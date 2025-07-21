@@ -147,6 +147,24 @@ impl JsonAstBuilder {
         self.json.push_str("null");
         self.value_end();
     }
+
+    fn line_comment(&mut self, comment: &str) {
+        self.write_punctuation();
+        self.next_punctuation = NextPunctuation::None;
+        assert!(!comment.starts_with("//"));
+        self.json.push_str("// ");
+        self.json.push_str(comment);
+        self.json.push('\n');
+    }
+
+    fn block_comment(&mut self, comment: &str) {
+        self.write_punctuation();
+        self.next_punctuation = NextPunctuation::None;
+        assert!(!comment.starts_with("/*"));
+        self.json.push_str("/* ");
+        self.json.push_str(comment);
+        self.json.push_str(" */");
+    }
 }
 
 enum TokenFull<'a> {
@@ -279,5 +297,33 @@ mod tests {
             b.build()
         },
         r#"{"name":"John","age":30,"is_student":false,"grades":[{"math":85,"science":90}]}"#
+    );
+
+    check!(
+        arr_with_comments,
+        {
+            let mut builder = JsonAstBuilder::new();
+            builder.begin_array();
+            {
+                builder.begin_object();
+                {
+                    builder.key("id");
+                    builder.line_comment("Item ID");
+                    builder.float(1.2);
+
+                    builder.key("location");
+                    builder.null();
+
+                    builder.key("name");
+                    builder.block_comment("Item Name");
+                    builder.string("Item 1");
+                }
+                builder.end_object();
+            }
+            builder.end_array();
+            builder.build()
+        },
+        r#"[{"id":// Item ID
+1.2,"location":null,"name":/* Item Name */"Item 1"}]"#
     );
 }
