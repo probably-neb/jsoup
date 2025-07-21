@@ -2,7 +2,6 @@
 #![feature(unsigned_signed_diff)]
 
 pub use serde_json;
-use serde_json::value;
 use std::{fmt::Display, hash::Hasher, ops::Range};
 
 const NUM_NEGATIVE: u32 = 1 << 0;
@@ -628,8 +627,15 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
 
 fn assert_number_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_span[i];
-    assert!(is_start_of_number(tree.contents[range.start]));
-    assert_eq!(tree.tok_desc[i], EMPTY_RANGE);
+    assert!(
+        is_start_of_number(tree.contents[range.start]),
+        "number must start with a digit or '-', found '{}'",
+        tree.contents[range.start] as char
+    );
+    assert_eq!(
+        tree.tok_desc[i], EMPTY_RANGE,
+        "number tokens should have empty descriptor range"
+    );
 
     let is_negative_sign = tree.contents[range.start] == b'-';
     let is_negative_extra = tree.tok_meta[i] & NUM_NEGATIVE != 0;
@@ -648,22 +654,50 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         }
         return count;
     }
-    assert!(count(value, b'.') <= 1);
-    assert!(count(value, b'e') <= 1);
-    assert!(count(value, b'E') <= 1);
-    assert!(count(value, b'-') <= 2);
-    assert!(count(value, b'+') == 0);
+    assert!(
+        count(value, b'.') <= 1,
+        "number can have at most one decimal point, found {}",
+        count(value, b'.')
+    );
+    assert!(
+        count(value, b'e') <= 1,
+        "number can have at most one 'e' for exponent, found {}",
+        count(value, b'e')
+    );
+    assert!(
+        count(value, b'E') <= 1,
+        "number can have at most one 'E' for exponent, found {}",
+        count(value, b'E')
+    );
+    assert!(
+        count(value, b'-') <= 2,
+        "number can have at most two '-' signs (one for negative, one for exponent), found {}",
+        count(value, b'-')
+    );
+    assert!(
+        count(value, b'+') == 0,
+        "number should not contain '+' sign, found {}",
+        count(value, b'+')
+    );
 
     let is_float_scientific = u32::max(count(value, b'e'), count(value, b'E')) != 0;
     let is_float_frac = count(value, b'.') != 0;
     let is_float = is_float_scientific || is_float_frac;
     let is_float_extra = tree.tok_meta[i] & NUM_FLOAT != 0;
-    assert!(is_float_extra == is_float);
+    assert!(
+        is_float_extra == is_float,
+        "float metadata flag {} should match actual float status {}",
+        is_float_extra,
+        is_float
+    );
 }
 
 fn assert_string_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_span[i];
-    assert!(range.len() >= 2);
+    assert!(
+        range.len() >= 2,
+        "string token must be at least 2 characters (opening and closing quotes)"
+    );
     assert_eq!(
         tree.contents[range.start], b'"',
         "expected `\"` at start of string, found `{}`",
@@ -675,8 +709,15 @@ fn assert_string_valid(tree: &JsonAst, i: usize) {
         "expected `\"` at end of string, found `{}`",
         tree.contents[range.end - 1] as char
     );
-    assert!(std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok());
-    assert_ne!(tree.contents[range.end - 1], b'\\');
+    assert!(
+        std::str::from_utf8(&tree.contents[range.start + 1..range.end - 1]).is_ok(),
+        "string content must be valid UTF-8"
+    );
+    assert_ne!(
+        tree.contents[range.end - 1],
+        b'\\',
+        "string must not end with an unescaped backslash"
+    );
 }
 
 fn assert_object_valid(tree: &JsonAst, i: usize) {
@@ -693,7 +734,10 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
         "expected `}}` at end of obj. Found `{}`",
         tree.contents[range.end - 1] as char
     );
-    assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
+    assert!(
+        std::str::from_utf8(&tree.contents[range.clone()]).is_ok(),
+        "object content must be valid UTF-8"
+    );
 
     let expected_count = tree.tok_meta[i];
     let mut found_count = 0;
@@ -704,8 +748,15 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
             tree.tok_kind[key_index],
             "key of object should be string",
         );
-        assert_eq!(0, tree.tok_meta[key_index]);
-        assert_ne!(0, tree.tok_desc[key_index].len());
+        assert_eq!(
+            0, tree.tok_meta[key_index],
+            "object key should have metadata value of 0"
+        );
+        assert_ne!(
+            0,
+            tree.tok_desc[key_index].len(),
+            "object key should have non-zero descriptor length"
+        );
         assert_eq!(
             tree.tok_desc[key_index].end,
             usize::max(
@@ -713,9 +764,18 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
                 tree.tok_desc[key_index].start + 1
             )
         );
-        assert!(key_index as u32 <= tree.tok_term[i]);
+        assert!(
+            key_index as u32 <= tree.tok_term[i],
+            "key index {} must not exceed object termination index {}",
+            key_index,
+            tree.tok_term[i]
+        );
         if tree.tok_next[key_index] == 0 {
-            assert_eq!(tree.tok_term[key_index], tree.tok_term[i]);
+            assert_eq!(
+                tree.tok_term[key_index], tree.tok_term[i],
+                "last key's termination index {} should match object's termination index {}",
+                tree.tok_term[key_index], tree.tok_term[i]
+            );
         }
         key_index = tree.tok_next[key_index] as usize;
         found_count += 1;
@@ -728,7 +788,10 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
 
 fn assert_array_valid(tree: &JsonAst, i: usize) {
     let range = &tree.tok_span[i];
-    assert!(range.len() >= 2);
+    assert!(
+        range.len() >= 2,
+        "array token must be at least 2 characters (opening and closing brackets)"
+    );
     assert_eq!(
         tree.contents[range.start], b'[',
         "expected '[' at start of array, found '{}'",
@@ -741,7 +804,10 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
         tree.contents[range.end - 1] as char,
         tree.value_at(i)
     );
-    assert!(std::str::from_utf8(&tree.contents[range.clone()]).is_ok());
+    assert!(
+        std::str::from_utf8(&tree.contents[range.clone()]).is_ok(),
+        "array content must be valid UTF-8"
+    );
 
     let expected_count = tree.tok_meta[i];
     let mut found_count = 0;
@@ -756,9 +822,18 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
             value_index < next_value_index || next_value_index == 0,
             "value index should be less than next value index"
         );
-        assert!(value_index as u32 <= tree.tok_term[i]);
+        assert!(
+            value_index as u32 <= tree.tok_term[i],
+            "value index {} must not exceed array termination index {}",
+            value_index,
+            tree.tok_term[i]
+        );
         if next_value_index == 0 {
-            assert_eq!(tree.tok_term[value_index], tree.tok_term[i]);
+            assert_eq!(
+                tree.tok_term[value_index], tree.tok_term[i],
+                "last value's termination index {} should match array's termination index {}",
+                tree.tok_term[value_index], tree.tok_term[i]
+            );
         }
         value_index = next_value_index;
         found_count += 1;
@@ -1606,7 +1681,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
 
     let parent_index = item_parent_index(tree, index);
 
-    if let Some(key_index) = parent_index.filter(|&i| is_object_key(tree, i)) {
+    if let Some(_key_index) = parent_index.filter(|&i| is_object_key(tree, i)) {
         if replace_index(tree, index, &serde_json::json!(null)).is_ok() {
             return Ok(());
         } else {
