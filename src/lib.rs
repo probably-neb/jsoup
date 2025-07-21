@@ -1589,7 +1589,7 @@ pub fn insert_index(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RemoveError {
     CannotRemoveRoot,
     InvalidIndex,
@@ -2413,7 +2413,7 @@ mod test {
     }
 
     mod remove {
-        use crate::{assert_tree_valid, parse, remove_index, test::extract_delimited};
+        use crate::{RemoveError, assert_tree_valid, parse, remove_index, test::extract_delimited};
 
         fn check(input: impl Into<String>, expected: impl Into<String>) {
             let (input, range) = extract_delimited(&input.into());
@@ -2432,40 +2432,98 @@ mod test {
             assert_tree_valid(&tree);
         }
 
-        #[test]
-        fn arr_value() {
-            check("[<1>]", "[]");
-            check("[1, <0>, 2]", "[1, 2]");
-            check(r#"{"foo": [1,2,<3>,]}"#, r#"{"foo": [1,2,]}"#);
-            check("[<0>, 1, 2]", "[1, 2]");
-            check(r#"[<[""]>]"#, r#"[]"#);
-            check(r#"[0,[<1>],3]"#, r#"[0,[],3]"#);
+        #[track_caller]
+        fn check_fail(input: impl Into<String>, expected_err: RemoveError) {
+            let (input, range) = extract_delimited(&input.into());
+            let mut tree = parse(&input).expect("parse failed");
+            let index = tree
+                .tok_span
+                .iter()
+                .position(|r| r == &range)
+                .expect("range found");
+
+            let err = remove_index(&mut tree, index).expect_err("expected remove to fail");
+            assert_eq!(err, expected_err);
+            assert_tree_valid(&tree);
+
+            let new_contents =
+                std::str::from_utf8(&tree.contents).expect("tree contents is valid utf8");
+
+            assert_eq!(new_contents, &input);
         }
 
-        #[test]
-        fn obj_key() {
-            check(r#"{<"key">: "value"}"#, "{}");
-            check(
-                r#"{"foo": "bar", <"baz">: "qux", "qal": "qud"}"#,
-                r#"{"foo": "bar", "qal": "qud"}"#,
-            );
-            check(
-                r#"{"foo": {"bar": {<"qux">: "qal"}}}"#,
-                r#"{"foo": {"bar": {}}}"#,
-            );
-            check(r#"{"a":[1,2,3],<"b">:""}"#, r#"{"a":[1,2,3]}"#);
+        macro_rules! check {
+            ($name:ident, $input:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check($input, $expected);
+                }
+            };
         }
 
-        #[test]
-        fn obj_value() {
-            check(
-                r#"{"foo": {"bar": <{"qux": "qal"}>}}"#,
-                r#"{"foo": {"bar": null}}"#,
-            );
-            check(
-                r#"{"foo": <"bar">, "baz": "quz"}"#,
-                r#"{"foo": null, "baz": "quz"}"#,
-            );
+        macro_rules! check_fail {
+            ($name:ident, $input:expr, $expected:expr) => {
+                #[test]
+                fn $name() {
+                    check_fail($input, $expected);
+                }
+            };
         }
+
+        check!(arr_value_single, "[<1>]", "[]");
+
+        check!(arr_value_middle, "[1, <0>, 2]", "[1, 2]");
+
+        check!(
+            arr_value_nested_trailing_comma,
+            r#"{"foo": [1,2,<3>,]}"#,
+            r#"{"foo": [1,2,]}"#
+        );
+
+        check!(arr_value_first, "[<0>, 1, 2]", "[1, 2]");
+
+        check!(arr_value_nested_array, r#"[<[""]>]"#, r#"[]"#);
+
+        check!(arr_value_deeply_nested, r#"[0,[<1>],3]"#, r#"[0,[],3]"#);
+
+        check!(obj_key_single, r#"{<"key">: "value"}"#, "{}");
+
+        check!(
+            obj_key_middle,
+            r#"{"foo": "bar", <"baz">: "qux", "qal": "qud"}"#,
+            r#"{"foo": "bar", "qal": "qud"}"#
+        );
+
+        check!(
+            obj_key_nested,
+            r#"{"foo": {"bar": {<"qux">: "qal"}}}"#,
+            r#"{"foo": {"bar": {}}}"#
+        );
+
+        check!(
+            obj_key_with_array_value,
+            r#"{"a":[1,2,3],<"b">:""}"#,
+            r#"{"a":[1,2,3]}"#
+        );
+
+        check!(
+            obj_value_nested_object,
+            r#"{"foo": {"bar": <{"qux": "qal"}>}}"#,
+            r#"{"foo": {"bar": null}}"#
+        );
+
+        check!(
+            obj_value_string,
+            r#"{"foo": <"bar">, "baz": "quz"}"#,
+            r#"{"foo": null, "baz": "quz"}"#
+        );
+
+        check_fail!(arr_root_fail, "<[1, 2, 3]>", RemoveError::CannotRemoveRoot);
+
+        check_fail!(
+            obj_root_fail,
+            r#"<{"key": "value"}>"#,
+            RemoveError::CannotRemoveRoot
+        );
     }
 }
