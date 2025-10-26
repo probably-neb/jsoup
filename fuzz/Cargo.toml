@@ -8,9 +8,10 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+jsoup = {path = ".."}
+pretty_assertions = "1.4.1"
 
-[dependencies.jsoup]
-path = ".."
+
 
 [lib]
 name = "common"

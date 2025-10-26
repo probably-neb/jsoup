@@ -1,0 +1,21 @@
+[
+  {
+    "label": "Debug Fuzz Insert",
+    "program": "target/aarch64-apple-darwin/debug/insert",
+    "args": [
+      "artifacts/insert/crash-714f89ca37cc7f7b207907477b23d51672455452"
+    ],
+    "request": "launch",
+    "adapter": "CodeLLDB",
+    "build": {
+      "label": "Build Fuzz Insert",
+      "command": "cargo",
+      "args": [
+        "fuzz",
+        "build",
+        "insert",
+        "--dev"
+      ]
+    }
+  }
+]

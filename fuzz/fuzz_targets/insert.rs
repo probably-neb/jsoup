@@ -1,6 +1,6 @@
 #![no_main]
 
-use common::{random_json, random_serde_json_value, random_value_index};
+use common::{random_json_ast, random_serde_json_value, random_value_index};
 use jsoup::{InsertionMethod, InsertionValue, serde_json};
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
@@ -18,7 +18,7 @@ struct InsertDef {
 
 impl<'a> Arbitrary<'a> for InsertDef {
     fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
-        let contents = random_json(rng)?;
+        let contents = random_json_ast(rng)?;
         let value = random_serde_json_value(rng)?;
         let index = random_value_index(&contents, rng)?;
         let method = *rng.choose(&[
@@ -73,5 +73,5 @@ fuzz_target!(|data: InsertDef| {
         std::str::from_utf8(&tree.contents).expect("Failed to parse contents as UTF-8 bytes"),
     )
     .expect("tree contents valid");
-    assert_eq!(tree, result_tree);
+    pretty_assertions::assert_eq!(tree, result_tree);
 });

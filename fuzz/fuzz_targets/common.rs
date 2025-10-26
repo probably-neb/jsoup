@@ -99,11 +99,27 @@ pub fn random_json_ast_depth(
     const MAX_DEPTH: usize = 4;
 
     // Limit choices based on depth to prevent infinite recursion
-    let type_choice: u8 = if depth >= MAX_DEPTH {
-        rng.int_in_range(0..=5)? // Only simple types
+    let type_choice: u8 = if depth == 0 {
+        rng.int_in_range(4..=5)? // Only containers
+    } else if depth >= MAX_DEPTH {
+        rng.int_in_range(0..=3)? // Only simple types
     } else {
-        rng.int_in_range(0..=7)? // All types
+        rng.int_in_range(0..=5)? // All types
     };
+
+    let _json: &str = &builder.json;
+
+    if depth > 0 {
+        if rng.ratio(1, 10)? {
+            builder.line_comment(rng.arbitrary()?);
+        }
+        if rng.ratio(1, 10)? {
+            // todo: should be block comment
+            builder.line_comment(rng.arbitrary()?);
+        }
+    }
+
+    let _json: &str = &builder.json;
 
     match type_choice {
         0 => builder.null(),
@@ -117,9 +133,7 @@ pub fn random_json_ast_depth(
             }
         }
         3 => builder.string(rng.arbitrary()?),
-        4 => builder.line_comment(rng.arbitrary()?),
-        5 => builder.block_comment(rng.arbitrary()?),
-        6 => {
+        4 => {
             // Array
             let len = rng.arbitrary_len::<u64>()?;
             builder.begin_array();
@@ -132,7 +146,7 @@ pub fn random_json_ast_depth(
             }
             builder.end_array();
         }
-        7 => {
+        5 => {
             // Object
             let len = rng.arbitrary_len::<u64>()?;
             builder.begin_object();
@@ -149,6 +163,15 @@ pub fn random_json_ast_depth(
         }
         _ => unreachable!(),
     };
+
+    if depth > 0 {
+        if rng.ratio(1, 10)? {
+            builder.line_comment(rng.arbitrary()?);
+        }
+        if rng.ratio(1, 10)? {
+            builder.line_comment(rng.arbitrary()?);
+        }
+    }
     Ok(())
 }
 

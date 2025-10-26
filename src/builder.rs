@@ -35,7 +35,8 @@ impl JsonAstBuilder {
     }
 
     pub fn build(self) -> JsonAst {
-        match crate::parse(&self.json) {
+        let json: &str = &self.json;
+        match crate::parse(json) {
             Ok(tree) => tree,
             Err(err) => panic!("Failed to parse JSON: {}. \n{}", err, self.json),
         }
@@ -68,8 +69,9 @@ impl JsonAstBuilder {
 
     fn value_end(&mut self) {
         self.next_punctuation = NextPunctuation::Comma;
-        // todo assert state
-        self.state.pop();
+        if matches!(self.state.last(), Some(State::ObjectValue)) {
+            self.state.pop();
+        }
     }
 
     pub fn begin_object(&mut self) {
@@ -81,11 +83,12 @@ impl JsonAstBuilder {
     }
 
     pub fn end_object(&mut self) {
-        let Some(State::Object) = self.state.pop() else {
-            unreachable!("Trying to end an object without starting it");
-        };
-        self.json.push('}');
+        assert!(
+            matches!(self.state.pop(), Some(State::Object)),
+            "Trying to end an object without starting it"
+        );
 
+        self.json.push('}');
         self.value_end();
     }
 
@@ -98,6 +101,10 @@ impl JsonAstBuilder {
     }
 
     pub fn end_array(&mut self) {
+        assert!(
+            matches!(self.state.pop(), Some(State::Array)),
+            "Trying to end an array without starting it"
+        );
         self.json.push(']');
         self.value_end();
     }
@@ -152,9 +159,11 @@ impl JsonAstBuilder {
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
         assert!(!comment.starts_with("//"));
-        self.json.push_str("// ");
-        self.json.push_str(comment);
-        self.json.push('\n');
+        for line in comment.lines() {
+            self.json.push_str("// ");
+            self.json.push_str(line);
+            self.json.push('\n');
+        }
     }
 
     pub fn block_comment(&mut self, comment: &str) {

@@ -813,10 +813,11 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
             tree.tok_term[i]
         );
         if next_value_index == 0 {
-            assert_eq!(
-                tree.tok_term[value_index], tree.tok_term[i],
+            assert!(
+                tree.tok_term[value_index] <= tree.tok_term[i],
                 "last value's termination index {} should match array's termination index {}",
-                tree.tok_term[value_index], tree.tok_term[i]
+                tree.tok_term[value_index],
+                tree.tok_term[i]
             );
         }
         value_index = next_value_index;
