@@ -89,7 +89,7 @@ impl JsonAstBuilder {
         self.value_end();
     }
 
-    fn begin_array(&mut self) {
+    pub fn begin_array(&mut self) {
         self.value_start();
         self.json.push('[');
 
@@ -97,7 +97,7 @@ impl JsonAstBuilder {
         self.state.push(State::Array);
     }
 
-    fn end_array(&mut self) {
+    pub fn end_array(&mut self) {
         self.json.push(']');
         self.value_end();
     }
@@ -123,32 +123,32 @@ impl JsonAstBuilder {
     }
 
     // todo: i128?
-    fn int(&mut self, arg: i64) {
+    pub fn int(&mut self, arg: i64) {
         self.value_start();
-        write!(&mut self.json, "{}", arg);
+        write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
     }
 
     // todo: precision/rounding
-    fn float(&mut self, arg: f64) {
+    pub fn float(&mut self, arg: f64) {
         self.value_start();
-        write!(&mut self.json, "{}", arg);
+        write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
     }
 
-    fn bool(&mut self, arg: bool) {
+    pub fn bool(&mut self, arg: bool) {
         self.value_start();
-        write!(&mut self.json, "{}", arg);
+        write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
     }
 
-    fn null(&mut self) {
+    pub fn null(&mut self) {
         self.value_start();
         self.json.push_str("null");
         self.value_end();
     }
 
-    fn line_comment(&mut self, comment: &str) {
+    pub fn line_comment(&mut self, comment: &str) {
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
         assert!(!comment.starts_with("//"));
@@ -157,7 +157,7 @@ impl JsonAstBuilder {
         self.json.push('\n');
     }
 
-    fn block_comment(&mut self, comment: &str) {
+    pub fn block_comment(&mut self, comment: &str) {
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
         assert!(!comment.starts_with("/*"));

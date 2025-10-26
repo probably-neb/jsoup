@@ -84,6 +84,74 @@ pub fn random_serde_json_value_depth(
     }
 }
 
+pub fn random_json_ast(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
+    let mut builder = JsonAstBuilder::new();
+    random_json_ast_depth(rng, &mut builder, 0)?;
+    Ok(builder.build())
+}
+
+pub fn random_json_ast_depth(
+    rng: &mut Unstructured,
+    builder: &mut JsonAstBuilder,
+    depth: usize,
+) -> Result<(), arbitrary::Error> {
+    // TODO: replace usages of rng.int_in_range for sizes with rng.arbitrary_len
+    const MAX_DEPTH: usize = 4;
+
+    // Limit choices based on depth to prevent infinite recursion
+    let type_choice: u8 = if depth >= MAX_DEPTH {
+        rng.int_in_range(0..=5)? // Only simple types
+    } else {
+        rng.int_in_range(0..=7)? // All types
+    };
+
+    match type_choice {
+        0 => builder.null(),
+        1 => builder.bool(rng.arbitrary()?),
+        2 => {
+            let float: bool = rng.arbitrary()?;
+            if float {
+                builder.float(rng.arbitrary()?);
+            } else {
+                builder.int(rng.arbitrary()?);
+            }
+        }
+        3 => builder.string(rng.arbitrary()?),
+        4 => builder.line_comment(rng.arbitrary()?),
+        5 => builder.block_comment(rng.arbitrary()?),
+        6 => {
+            // Array
+            let len = rng.arbitrary_len::<u64>()?;
+            builder.begin_array();
+            for _ in 0..len {
+                match random_json_ast_depth(rng, builder, depth + 1) {
+                    Ok(_) => continue,
+                    Err(arbitrary::Error::NotEnoughData) => break,
+                    Err(e) => return Err(e),
+                }
+            }
+            builder.end_array();
+        }
+        7 => {
+            // Object
+            let len = rng.arbitrary_len::<u64>()?;
+            builder.begin_object();
+            for _ in 0..len {
+                let key: String = match rng.arbitrary() {
+                    Ok(k) => k,
+                    Err(arbitrary::Error::NotEnoughData) => break,
+                    Err(e) => return Err(e),
+                };
+                builder.key(&key);
+                random_json_ast_depth(rng, builder, depth + 1)?;
+            }
+            builder.end_object();
+        }
+        _ => unreachable!(),
+    };
+    Ok(())
+}
+
 pub struct AnnotatedJSON(String);
 
 fn write_raw_string(f: &mut std::fmt::Formatter<'_>, s: &str) -> std::fmt::Result {
