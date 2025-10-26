@@ -15,58 +15,6 @@ pub fn random_value_index(
     return rng.choose_index(tree.tok_kind.len());
 }
 
-pub fn random_path(
-    tree: &JsonAst,
-    rng: &mut Unstructured,
-) -> Result<(jsoup::Path, jsoup::ReplaceTarget), arbitrary::Error> {
-    let index = random_value_index(tree, rng)?;
-    use jsoup::{PathEntry, ReplaceTarget};
-    let mut path = vec![];
-    let mut cur = 0;
-    let mut target = ReplaceTarget::Value;
-
-    'outer: while cur != index {
-        assert!(tree.tok_desc[cur].contains(&index));
-        match tree.tok_kind[cur] {
-            jsoup::Token::Array => {
-                for (i, val_idx) in jsoup::ArrayItemIter::new(tree, cur).enumerate() {
-                    if val_idx == index {
-                        path.push(PathEntry::Idx(i));
-                        break 'outer;
-                    }
-                    if tree.tok_desc[val_idx].contains(&index) {
-                        cur = val_idx;
-                        continue 'outer;
-                    }
-                }
-                unreachable!();
-            }
-            jsoup::Token::Object => {
-                for (key_idx, val_idx) in jsoup::ObjectItemIter::new(tree, cur) {
-                    if key_idx == index {
-                        path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
-                        target = ReplaceTarget::Key;
-                        break 'outer;
-                    }
-                    if val_idx == index {
-                        path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
-                        target = ReplaceTarget::Value;
-                        break 'outer;
-                    }
-                    if tree.tok_desc[val_idx].contains(&index) {
-                        path.push(PathEntry::Str(tree.value_at(key_idx).to_string()));
-                        continue 'outer;
-                    }
-                }
-                unreachable!();
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    return Ok((jsoup::Path(path), target));
-}
-
 pub fn random_serde_json_value(
     rng: &mut Unstructured,
 ) -> Result<serde_json::Value, arbitrary::Error> {
