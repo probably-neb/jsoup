@@ -167,48 +167,8 @@ impl JsonAstBuilder {
     }
 }
 
-enum TokenFull<'a> {
-    Object,
-    Array,
-    Bool(bool),
-    String(&'a str),
-    Null,
-    Number(IntOrFloat),
-}
-
-impl<'a> TokenFull<'a> {
-    fn obj() -> Self {
-        Self::Object
-    }
-    fn arr() -> Self {
-        Self::Array
-    }
-    fn bool(b: bool) -> Self {
-        Self::Bool(b)
-    }
-
-    fn null() -> Self {
-        Self::Null
-    }
-
-    fn num(i: i64) -> Self {
-        Self::Number(IntOrFloat::Int(i))
-    }
-
-    fn float(f: f64) -> Self {
-        Self::Number(IntOrFloat::Float(f))
-    }
-}
-
-enum IntOrFloat {
-    Int(i64),
-    Float(f64),
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::{JsonAst, assert_tree_valid, builder::JsonAstBuilder, parse};
 
     fn check(input: &JsonAst, expected: impl Into<String>) {

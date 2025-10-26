@@ -21,9 +21,9 @@
     * first item index will be `container_index + 1`
     * to check if container is empty, check if `last_item_index == 0`
     * when container is empty, `tok_term[container_index] == container_index` so removal does not require any additional logic
-- [ ] Make comments part of AST, instead of just storing separately
-- [ ] Builder API for simultaneous creation of formatted JSON as well as tree
+- [x] Builder API for simultaneous creation of formatted JSON as well as tree
   - useful for replacement APIs
+- [*] Make comments part of AST, instead of just storing separately
 - [ ] Transition `assert_*_valid` to `check_*_valid` that return results, and have `assert_*_valid` that just `.expect()`
 - [ ] Proc macro like `serde_json_lenient::json!` that lowers to builder
 - [ ] Move from taking `serde_json::Value` to `JsonAst` based on builder pattern
@@ -53,4 +53,5 @@
   - goal is to parse as much as possible while marking sub regions as errors
   - return type becomes `(tree, List<Error>)` always
 - [ ] JSON5 parsing
-- ? maintaining comments in objects when replacing object with very similar object
+- [?] maintaining comments in objects when replacing object with very similar object
+  - i.e. obj merge
