@@ -33,9 +33,5 @@ fn main() -> Result<(), jsoup::ParseError> {
         );
     }
 
-    for comment in tree.comments.iter() {
-        println!("Comment: {:?}", comment);
-    }
-
     Ok(())
 }

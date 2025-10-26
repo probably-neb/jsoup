@@ -5,8 +5,11 @@ mod builder;
 pub use serde_json;
 use std::{fmt::Display, hash::Hasher, ops::Range};
 
-const NUM_NEGATIVE: u32 = 1 << 0;
-const NUM_FLOAT: u32 = 1 << 1;
+const META_NUM_NEGATIVE: u32 = 1 << 0;
+const META_NUM_FLOAT: u32 = 1 << 1;
+const META_COMMENT_LINE: u32 = 1 << 2;
+const META_COMMENT_BLOCK: u32 = 1 << 3;
+
 const EMPTY_RANGE: Range<usize> = 0..0;
 
 #[derive(PartialEq, Eq, Clone, Hash)]
@@ -19,7 +22,6 @@ pub struct JsonAst {
     pub tok_term: Vec<u32>,
     pub tok_meta: Vec<u32>,
     pub tok_next: Vec<u32>,
-    pub comments: Vec<Range<usize>>,
 }
 
 impl std::fmt::Debug for JsonAst {
@@ -43,7 +45,6 @@ impl std::fmt::Debug for JsonAst {
             .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
             .field("tok_term", &self.tok_term)
-            .field("comments", &self.comments)
             .finish()
     }
 }
@@ -57,7 +58,6 @@ impl JsonAst {
             tok_meta: Vec::new(),
             tok_next: Vec::new(),
             tok_term: Vec::new(),
-            comments: Vec::new(),
         }
     }
 
@@ -94,6 +94,17 @@ impl JsonAst {
         self.hash(&mut hasher);
         hasher.finish()
     }
+
+    fn reserve(&mut self, tok: Token) -> usize {
+        let index = self.next_index();
+        self.tok_term.push(index as u32);
+        self.tok_span.push(EMPTY_RANGE);
+        self.tok_kind.push(tok);
+        self.tok_meta.push(0);
+        self.tok_next.push(0);
+        self.assert_lengths();
+        index
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,6 +115,7 @@ pub enum Token {
     Number,
     Boolean,
     Null,
+    Comment,
 }
 
 impl Token {
@@ -261,7 +273,10 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
                 *cursor += 2;
                 while *cursor < tree.contents.len() {
                     if tree.contents[*cursor] == b'\n' {
-                        tree.comments.push(start..*cursor);
+                        let index = tree.reserve(Token::Comment);
+                        tree.tok_meta[index] = META_COMMENT_LINE;
+                        tree.tok_span[index].start = start;
+                        tree.tok_span[index].end = *cursor;
                         break;
                     }
 
@@ -281,7 +296,10 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
                         if tree.contents[*cursor + 1] == b'/' {
                             assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'*', b'/']);
                             *cursor += 2;
-                            tree.comments.push(start..*cursor + 1);
+                            let index = tree.reserve(Token::Comment);
+                            tree.tok_meta[index] = META_COMMENT_BLOCK;
+                            tree.tok_span[index].start = start;
+                            tree.tok_span[index].end = *cursor;
                             found = true;
                             break;
                         }
@@ -293,7 +311,9 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
                 }
                 parse_whitespace_maybe(tree, cursor);
             }
-            _ => {}
+            _ => {
+                return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
+            }
         }
     }
 }
@@ -448,10 +468,10 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 
     let mut meta = 0;
     if is_negative {
-        meta |= NUM_NEGATIVE;
+        meta |= META_NUM_NEGATIVE;
     }
     if is_float {
-        meta |= NUM_FLOAT;
+        meta |= META_NUM_FLOAT;
     }
 
     tree.tok_term.push(tree.next_index() as u32);
@@ -618,7 +638,7 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
     );
 
     let is_negative_sign = tree.contents[range.start] == b'-';
-    let is_negative_extra = tree.tok_meta[i] & NUM_NEGATIVE != 0;
+    let is_negative_extra = tree.tok_meta[i] & META_NUM_NEGATIVE != 0;
     assert_eq!(
         is_negative_sign, is_negative_extra,
         "Expected negative sign on negative number, found is_negative={} and first_char={}",
@@ -658,7 +678,7 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
     let is_float_scientific = (count(value, b'e') + count(value, b'E')) == 1;
     let is_float_frac = count(value, b'.') != 0;
     let is_float = is_float_scientific || is_float_frac;
-    let is_float_extra = tree.tok_meta[i] & NUM_FLOAT != 0;
+    let is_float_extra = tree.tok_meta[i] & META_NUM_FLOAT != 0;
     assert!(
         is_float_extra == is_float,
         "float metadata flag {} should match actual float status {}",
@@ -826,6 +846,24 @@ fn assert_null_valid(tree: &JsonAst, i: usize) {
     );
 }
 
+fn assert_comment_valid(tree: &JsonAst, i: usize) {
+    if tree.tok_meta[i] & META_COMMENT_LINE != 0 {
+        assert!(
+            tree.value_at(i).starts_with("//"),
+            "line comment value must start with '//', found '{}'",
+            tree.value_at(i)
+        );
+    } else if tree.tok_meta[i] & META_COMMENT_BLOCK != 0 {
+        assert!(
+            tree.value_at(i).starts_with("/*") && tree.value_at(i).ends_with("*/"),
+            "block comment value must start with '/*' and end with '*/', found '{}'",
+            tree.value_at(i)
+        );
+    } else {
+        unreachable!("unexpected token type for comment");
+    }
+}
+
 pub fn assert_tree_valid(tree: &JsonAst) {
     tree.assert_lengths();
     // todo! assert all comments are
@@ -840,6 +878,7 @@ pub fn assert_tree_valid(tree: &JsonAst) {
             Token::Array => assert_array_valid(tree, i),
             Token::Boolean => assert_bool_valid(tree, i),
             Token::Null => assert_null_valid(tree, i),
+            Token::Comment => assert_comment_valid(tree, i),
         }
     }
     // todo! assert reparsing contents succeeds, and that the parsed tree is identical to the original tree
@@ -1010,13 +1049,13 @@ pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
         serde_json::Value::Number(n) => {
             let mut meta = 0;
             if n.is_f64() {
-                meta |= NUM_FLOAT;
+                meta |= META_NUM_FLOAT;
                 if n.as_f64().unwrap().is_sign_negative() {
-                    meta |= NUM_NEGATIVE;
+                    meta |= META_NUM_NEGATIVE;
                 }
             } else if n.is_i64() && !n.is_u64() {
-                meta |= NUM_NEGATIVE;
-                meta &= !NUM_FLOAT;
+                meta |= META_NUM_NEGATIVE;
+                meta &= !META_NUM_FLOAT;
             }
             meta
         }
@@ -1117,15 +1156,9 @@ pub fn replace_index(
         for tok_term in &mut source_tree.tok_term {
             *tok_term += offset_token as u32;
         }
-        for comment in &mut source_tree.comments {
-            comment.start += offset_content;
-            comment.end += offset_content;
-        }
 
         let tok_next_prev = tree.tok_next[target_index];
 
-        tree.comments.append(&mut source_tree.comments);
-        tree.comments.sort_by_key(|r| (r.start, r.end));
         tree.tok_kind
             .splice(target_replacement_range.clone(), source_tree.tok_kind);
         tree.tok_span
@@ -1347,7 +1380,6 @@ pub fn insert_index(
                     tok_kind: vec![source_token_kind],
                     tok_meta: vec![source_token_meta],
                     tok_term: vec![0],
-                    comments: vec![],
                     contents: source_contents.into_bytes(),
                 }
             };
@@ -1385,7 +1417,6 @@ pub fn insert_index(
                 tok_meta: vec![0],
                 tok_span: vec![0..key_len],
                 tok_term: vec![0],
-                comments: vec![],
                 contents: source_contents.into_bytes(),
             };
             let mut cursor = key_len + colon_space.len();
