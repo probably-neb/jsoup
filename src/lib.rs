@@ -21,8 +21,21 @@ pub struct JsonAst {
     /// short for tok_termination:
     /// the index of the last item in the subtree starting at this node
     pub tok_term: Vec<u32>,
+    /// token metadata:
+    /// additional information about the token
     pub tok_meta: Vec<u32>,
+    /// token next:
+    /// the index of the next token in the sequence
+    /// For keys this is the next key in the object,
+    /// for array values this is the next value in the array
+    /// 0 for no next token
     pub tok_next: Vec<u32>,
+    /// short for tok_child:
+    /// the index of the child of this node
+    /// For containers, this is the first (non comment) child element
+    /// For obj keys, this is their corresponding value element
+    /// 0 for no child
+    pub tok_chld: Vec<u32>,
 }
 
 impl std::fmt::Debug for JsonAst {
@@ -46,6 +59,7 @@ impl std::fmt::Debug for JsonAst {
             .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
             .field("tok_term", &self.tok_term)
+            .field("tok_chld", &self.tok_chld)
             .finish()
     }
 }
@@ -59,6 +73,7 @@ impl JsonAst {
             tok_meta: Vec::new(),
             tok_next: Vec::new(),
             tok_term: Vec::new(),
+            tok_chld: Vec::new(),
         }
     }
 
@@ -86,6 +101,7 @@ impl JsonAst {
         assert_eq!(self.tok_span.len(), self.tok_kind.len());
         assert_eq!(self.tok_span.len(), self.tok_meta.len());
         assert_eq!(self.tok_span.len(), self.tok_next.len());
+        assert_eq!(self.tok_span.len(), self.tok_chld.len());
         assert_eq!(self.tok_span.len(), self.tok_term.len());
     }
 
@@ -103,6 +119,7 @@ impl JsonAst {
         self.tok_kind.push(tok);
         self.tok_meta.push(0);
         self.tok_next.push(0);
+        self.tok_chld.push(0);
         self.assert_lengths();
         index
     }
@@ -520,6 +537,9 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         tree.tok_next[key_index_prev] = key_index as u32;
         key_index_prev = key_index;
         key_count += 1;
+        if tree.tok_chld[obj_index] == 0 {
+            tree.tok_chld[obj_index] = key_index as u32;
+        }
 
         let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
@@ -539,6 +559,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         let value_index = tree.next_index();
         parse_value(tree, cursor)?;
         // key descendant range is the value range
+        tree.tok_chld[key_index] = value_index as u32;
         let value_term = tree.tok_term[value_index];
         tree.tok_term[key_index] = value_term;
         tree.tok_term[obj_index] = value_term;
@@ -589,6 +610,9 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         tree.tok_term[array_index] = tree.tok_term[value_index];
         value_index_prev = value_index;
         value_count += 1;
+        if tree.tok_chld[array_index] == 0 {
+            tree.tok_chld[array_index] = value_index as u32;
+        }
 
         let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
@@ -725,6 +749,11 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
         assert_eq!(
             0, tree.tok_meta[key_index],
             "object key should have metadata value of 0"
+        );
+        assert!(
+            tree.tok_chld[key_index] > 0,
+            "key index {} must have a child index greater than 0",
+            key_index
         );
         assert!(
             key_index as u32 <= tree.tok_term[i],
@@ -962,21 +991,16 @@ fn container_first_item_index(tree: &JsonAst, index: usize) -> usize {
     assert!(
         matches!(tree.tok_kind[index], Token::Array | Token::Object) || is_object_key(tree, index)
     );
-    let next_index = if index + 1 <= tree.tok_term[index] as usize {
-        index + 1
-    } else {
-        0
-    };
-    next_index
+    tree.tok_chld[index] as usize
 }
 
 /// Will be zero if array is empty
-fn container_last_item_index(tree: &JsonAst, array_index: usize) -> usize {
+fn container_last_item_index(tree: &JsonAst, container_index: usize) -> usize {
     assert!(matches!(
-        tree.tok_kind[array_index],
+        tree.tok_kind[container_index],
         Token::Array | Token::Object
     ));
-    let mut item_index = container_first_item_index(tree, array_index);
+    let mut item_index = container_first_item_index(tree, container_index);
     while tree.tok_next[item_index] != 0 {
         item_index = tree.tok_next[item_index] as usize;
     }
@@ -1020,6 +1044,7 @@ pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
 pub fn is_object_key(tree: &JsonAst, target_index: usize) -> bool {
     tree.tok_kind[target_index] == Token::String
         && tree.tok_term[target_index] > target_index as u32
+        && tree.tok_chld[target_index] > 0
 }
 
 pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
@@ -1360,6 +1385,7 @@ pub fn insert_index(
                     tok_kind: vec![source_token_kind],
                     tok_meta: vec![source_token_meta],
                     tok_term: vec![0],
+                    tok_chld: vec![0],
                     contents: source_contents.into_bytes(),
                 }
             };
@@ -1397,6 +1423,7 @@ pub fn insert_index(
                 tok_meta: vec![0],
                 tok_span: vec![0..key_len],
                 tok_term: vec![0],
+                tok_chld: vec![1],
                 contents: source_contents.into_bytes(),
             };
             let mut cursor = key_len + colon_space.len();
