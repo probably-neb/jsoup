@@ -1762,12 +1762,14 @@ fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
     while cur_index > 0 {
         if tree.tok_next[cur_index] as usize == item_index {
             item_index = cur_index;
-        } else if cur_index + 1 == item_index && tree.tok_term[cur_index] >= item_index as u32 {
+        } else if tree.tok_chld[cur_index] as usize == item_index
+            && tree.tok_term[cur_index] >= item_index as u32
+        {
             return Some(cur_index);
         }
         cur_index -= 1;
     }
-    if cur_index + 1 == item_index {
+    if tree.tok_chld[cur_index] as usize == item_index && item_index > 0 {
         return Some(cur_index);
     }
 
@@ -2466,14 +2468,13 @@ mod test {
             r#"{"\n":false,"0":{"": {}}}"#
         );
 
-        check!(
+        check_fail!(
             arr_insert_at_comment,
             r#"[<// F
 >            true]"#,
             After,
             Arr(json!(null)),
-            r#"[// F
-            null,true]"#
+            InsertionError::TargetIsNotItem
         );
     }
 
