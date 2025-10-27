@@ -272,12 +272,12 @@ fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Pars
             b'/' => {
                 assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'/']);
                 *cursor += 2;
-                while *cursor < tree.contents.len() {
-                    if tree.contents[*cursor] == b'\n' {
+                while *cursor <= tree.contents.len() {
+                    if *cursor == tree.contents.len() || tree.contents[*cursor] == b'\n' {
                         let index = tree.reserve(Token::Comment);
                         tree.tok_meta[index] = META_COMMENT_LINE;
                         tree.tok_span[index].start = start;
-                        tree.tok_span[index].end = *cursor;
+                        tree.tok_span[index].end = usize::min(*cursor + 1, tree.contents.len());
                         break;
                     }
 
