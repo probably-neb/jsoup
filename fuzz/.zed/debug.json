@@ -3,7 +3,7 @@
     "label": "Debug Fuzz Insert",
     "program": "target/aarch64-apple-darwin/debug/insert",
     "args": [
-      "artifacts/insert/crash-714f89ca37cc7f7b207907477b23d51672455452"
+      "artifacts/insert/crash-efe8356ac264170266341f7dda2a6bd8dd51a018"
     ],
     "request": "launch",
     "adapter": "CodeLLDB",

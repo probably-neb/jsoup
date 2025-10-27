@@ -1007,6 +1007,22 @@ fn container_last_item_index(tree: &JsonAst, container_index: usize) -> usize {
     item_index
 }
 
+/// Upsert a containers first child index
+fn upsert_container_first_child_index(
+    tree: &mut JsonAst,
+    container_index: usize,
+    child_index: usize,
+) {
+    assert!(matches!(
+        tree.tok_kind[container_index],
+        Token::Array | Token::Object
+    ));
+    let container_child_index = tree.tok_chld[container_index];
+    if container_child_index == 0 || container_child_index > child_index as u32 {
+        tree.tok_chld[container_index] = child_index as u32;
+    }
+}
+
 /// Adjusts a byte range to ensure it falls on UTF-8 character boundaries
 pub fn str_range_adjusted<'a>(bytes: &'a [u8], range: Range<usize>) -> &'a str {
     let contents_str = unsafe { std::str::from_utf8_unchecked(&bytes) };
@@ -1541,6 +1557,10 @@ pub fn insert_index(
         target_tok_insertion_index..target_tok_insertion_index,
         source_tree.tok_term,
     );
+    tree.tok_chld.splice(
+        target_tok_insertion_index..target_tok_insertion_index,
+        source_tree.tok_chld,
+    );
     tree.contents.splice(
         target_content_insertion_index..target_content_insertion_index,
         content_slices.into_iter().flatten().copied(),
@@ -1583,6 +1603,7 @@ pub fn insert_index(
         }
     }
 
+    upsert_container_first_child_index(tree, target_container_index, source_insertion_range.start);
     // the only tokens before the insertion range that need to have their
     // descendant and content ranges updated are the ancestors of the container
     // we are inserting into
@@ -1601,6 +1622,18 @@ pub fn insert_index(
 
     for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
         *tok_term += diff_token as u32;
+    }
+
+    for tok_child in &mut tree.tok_chld[source_insertion_range.clone()] {
+        if *tok_child > 0 {
+            *tok_child += source_insertion_range.start as u32;
+        }
+    }
+
+    for tok_child in &mut tree.tok_chld[source_insertion_range.end..] {
+        if *tok_child > 0 {
+            *tok_child += diff_token as u32;
+        }
     }
 
     // all tokens within the insertion range need to have their content ranges
