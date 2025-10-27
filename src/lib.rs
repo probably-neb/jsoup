@@ -1142,10 +1142,12 @@ pub fn replace_index(
         tree.tok_next.drain(target_replacement_range.clone());
         tree.tok_span.drain(target_replacement_range.clone());
         tree.tok_term.drain(target_replacement_range.clone());
+        tree.tok_chld.drain(target_replacement_range.clone());
 
         tree.tok_kind[target_index] = source_token_type;
         tree.tok_meta[target_index] = 0;
         if !target_is_key {
+            tree.tok_chld[target_index] = 0;
             tree.tok_term[target_index] = target_index as u32;
         }
 
@@ -1177,6 +1179,11 @@ pub fn replace_index(
         for tok_term in &mut source_tree.tok_term {
             *tok_term += offset_token as u32;
         }
+        for tok_chld in &mut source_tree.tok_chld {
+            if *tok_chld != 0 {
+                *tok_chld += offset_token as u32;
+            }
+        }
 
         let tok_next_prev = tree.tok_next[target_index];
 
@@ -1190,6 +1197,8 @@ pub fn replace_index(
             .splice(target_replacement_range.clone(), source_tree.tok_next);
         tree.tok_term
             .splice(target_replacement_range.clone(), source_tree.tok_term);
+        tree.tok_chld
+            .splice(target_replacement_range.clone(), source_tree.tok_chld);
         tree.contents
             .splice(target_content_range.clone(), source_tree.contents);
 
@@ -1224,6 +1233,17 @@ pub fn replace_index(
         for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
             add_signed_u32(tok_term, tok_diff);
         }
+
+        for tok_child in &mut tree.tok_chld[0..source_insertion_range.start] {
+            if *tok_child >= target_replacement_range.end as u32 {
+                add_signed_u32(tok_child, tok_diff);
+            }
+        }
+        for tok_child in &mut tree.tok_chld[source_insertion_range.end..] {
+            if *tok_child >= target_replacement_range.end as u32 {
+                add_signed_u32(tok_child, tok_diff);
+            }
+        }
     }
 
     // update tok_span
@@ -1234,12 +1254,12 @@ pub fn replace_index(
         )
         .unwrap();
 
-        for range in &mut (&mut tree.tok_span)[0..source_insertion_range.start] {
+        for range in &mut tree.tok_span[0..source_insertion_range.start] {
             if range.end > target_content_range.end {
                 add_signed(&mut range.end, end_diff);
             }
         }
-        for range in &mut (&mut tree.tok_span)[source_insertion_range.end..] {
+        for range in &mut tree.tok_span[source_insertion_range.end..] {
             add_signed_range(range, end_diff);
         }
     };
