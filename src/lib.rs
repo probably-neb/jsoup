@@ -2405,6 +2405,16 @@ mod test {
             Obj(("", json!({}))),
             r#"{"\n":false,"0":{"": {}}}"#
         );
+
+        check!(
+            arr_insert_at_comment,
+            r#"[<// F
+>            true]"#,
+            After,
+            Arr(json!(null)),
+            r#"[// F
+            null,true]"#
+        );
     }
 
     mod remove {
