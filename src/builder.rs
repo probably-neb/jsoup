@@ -36,6 +36,9 @@ impl JsonAstBuilder {
 
     pub fn build(self) -> JsonAst {
         let json: &str = &self.json;
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("json = r#\"\n{}\n\"#;", json);
+        }
         match crate::parse(json) {
             Ok(tree) => tree,
             Err(err) => panic!("Failed to parse JSON: {}. \n{}", err, self.json),
@@ -75,6 +78,9 @@ impl JsonAstBuilder {
     }
 
     pub fn begin_object(&mut self) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.begin_object();");
+        }
         self.value_start();
         self.json.push('{');
 
@@ -83,6 +89,9 @@ impl JsonAstBuilder {
     }
 
     pub fn end_object(&mut self) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.end_object();");
+        }
         assert!(
             matches!(self.state.pop(), Some(State::Object)),
             "Trying to end an object without starting it"
@@ -93,6 +102,9 @@ impl JsonAstBuilder {
     }
 
     pub fn begin_array(&mut self) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.begin_array();");
+        }
         self.value_start();
         self.json.push('[');
 
@@ -101,6 +113,9 @@ impl JsonAstBuilder {
     }
 
     pub fn end_array(&mut self) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.end_array();");
+        }
         assert!(
             matches!(self.state.pop(), Some(State::Array)),
             "Trying to end an array without starting it"
@@ -110,6 +125,9 @@ impl JsonAstBuilder {
     }
 
     pub fn key(&mut self, key: &str) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.key(\"{}\");", key);
+        }
         assert!(matches!(self.state.last(), Some(State::Object)));
         if self.next_punctuation == NextPunctuation::Comma {
             self.json.push(',');
@@ -122,6 +140,9 @@ impl JsonAstBuilder {
     }
 
     pub fn string(&mut self, value: &str) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.string(\"{}\");", value);
+        }
         self.value_start();
         self.json.push('"');
         self.json.push_str(value);
@@ -131,6 +152,9 @@ impl JsonAstBuilder {
 
     // todo: i128?
     pub fn int(&mut self, arg: i64) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.int({});", arg);
+        }
         self.value_start();
         write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
@@ -138,24 +162,36 @@ impl JsonAstBuilder {
 
     // todo: precision/rounding
     pub fn float(&mut self, arg: f64) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.float({});", arg);
+        }
         self.value_start();
         write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
     }
 
     pub fn bool(&mut self, arg: bool) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.bool({});", arg);
+        }
         self.value_start();
         write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();
     }
 
     pub fn null(&mut self) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.null();");
+        }
         self.value_start();
         self.json.push_str("null");
         self.value_end();
     }
 
     pub fn line_comment(&mut self, comment: &str) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.line_comment(r#\"{}\"#);", comment);
+        }
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
         assert!(!comment.starts_with("//"));
@@ -167,6 +203,9 @@ impl JsonAstBuilder {
     }
 
     pub fn block_comment(&mut self, comment: &str) {
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.block_comment(r#\"{}\"#);", comment);
+        }
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
         assert!(!comment.starts_with("/*"));
@@ -294,5 +333,22 @@ mod tests {
         },
         r#"[{"id":// Item ID
 1.2,"location":null,"name":/* Item Name */"Item 1"}]"#
+    );
+
+    check!(
+        arr_with_newline_line_comment,
+        {
+            let mut builder = JsonAstBuilder::new();
+            builder.begin_array();
+            builder.line_comment(
+                r#"F
+"#,
+            );
+            builder.bool(true);
+            builder.end_array();
+            builder.build()
+        },
+        r#"[// F
+true]"#
     );
 }

@@ -69,9 +69,15 @@ fuzz_target!(|data: InsertDef| {
     // should never make a valid tree invalid
     jsoup::assert_tree_valid(&tree);
 
-    let result_tree = jsoup::parse(
+    let result_tree = match jsoup::parse(
         std::str::from_utf8(&tree.contents).expect("Failed to parse contents as UTF-8 bytes"),
-    )
-    .expect("tree contents valid");
+    ) {
+        Ok(tree) => tree,
+        Err(err) => panic!(
+            "Tree parsing failed: {}. json = r#\"{}\"",
+            err,
+            String::from_utf8_lossy(&tree.contents)
+        ),
+    };
     pretty_assertions::assert_eq!(tree, result_tree);
 });
