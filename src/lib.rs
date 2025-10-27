@@ -204,7 +204,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
 
     let mut cursor = 0;
 
-    let eof = parse_any_ignore_maybe(&mut tree, &mut cursor)?;
+    let eof = parse_whitespace_or_comment(&mut tree, &mut cursor)?;
     if !eof {
         let res = match tree.contents[cursor] {
             b'[' => parse_array(&mut tree, &mut cursor),
@@ -225,7 +225,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
             return res.map(|_| tree);
         };
     }
-    let eof = parse_any_ignore_maybe(&mut tree, &mut cursor)?;
+    let eof = parse_whitespace_or_comment(&mut tree, &mut cursor)?;
     if !eof {
         return Err(ParseError::UnexpectedToken(tree.contents[cursor] as char));
     }
@@ -233,18 +233,18 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     return Ok(tree);
 }
 
-fn parse_any_ignore_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<bool, ParseError> {
+fn parse_whitespace_or_comment(tree: &mut JsonAst, cursor: &mut usize) -> Result<bool, ParseError> {
     tree.assert_lengths();
-    let eof = parse_whitespace_maybe(tree, cursor);
+    let eof = parse_whitespace(tree, cursor);
     if eof {
         return Ok(eof);
     }
-    parse_comment_maybe(tree, cursor)?;
-    let eof = parse_whitespace_maybe(tree, cursor);
+    parse_any_comments(tree, cursor)?;
+    let eof = parse_whitespace(tree, cursor);
     Ok(eof)
 }
 
-fn parse_whitespace_maybe(tree: &mut JsonAst, cursor: &mut usize) -> bool {
+fn parse_whitespace(tree: &mut JsonAst, cursor: &mut usize) -> bool {
     tree.assert_lengths();
     assert!(*cursor <= tree.contents.len());
     while *cursor < tree.contents.len() && tree.contents[*cursor].is_ascii_whitespace() {
@@ -255,7 +255,7 @@ fn parse_whitespace_maybe(tree: &mut JsonAst, cursor: &mut usize) -> bool {
     return *cursor == tree.contents.len();
 }
 
-fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
+fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
     tree.assert_lengths();
     if *cursor >= tree.contents.len() {
         return Ok(());
@@ -283,7 +283,7 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
 
                     *cursor += 1;
                 }
-                parse_whitespace_maybe(tree, cursor);
+                parse_whitespace(tree, cursor);
             }
             b'*' => {
                 assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'/', b'*']);
@@ -310,7 +310,7 @@ fn parse_comment_maybe(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Par
                 if !found {
                     return Err(ParseError::UnexpectedEndOfInput);
                 }
-                parse_whitespace_maybe(tree, cursor);
+                parse_whitespace(tree, cursor);
             }
             _ => {
                 return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
@@ -522,7 +522,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     let mut key_count = 0;
 
     loop {
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -539,7 +539,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         key_index_prev = key_index;
         key_count += 1;
 
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -549,7 +549,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         }
         *cursor += 1;
 
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -561,7 +561,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         tree.tok_term[key_index] = value_term;
         tree.tok_term[obj_index] = value_term;
 
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -597,7 +597,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     let mut value_count = 0;
 
     loop {
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
@@ -612,7 +612,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         value_index_prev = value_index;
         value_count += 1;
 
-        let eof = parse_any_ignore_maybe(tree, cursor)?;
+        let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
         }
