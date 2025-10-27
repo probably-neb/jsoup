@@ -1710,10 +1710,14 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     tree.tok_next.drain(token_removal_range.clone());
     tree.tok_meta.drain(token_removal_range.clone());
     tree.tok_term.drain(token_removal_range.clone());
+    tree.tok_chld.drain(token_removal_range.clone());
     tree.contents.drain(contents_removal_range.clone());
 
     if let Some(parent_index) = parent_index.filter(|&i| !is_object_key(tree, i)) {
         tree.tok_meta[parent_index] -= 1;
+        if tree.tok_meta[parent_index] == 0 {
+            tree.tok_chld[parent_index] = 0;
+        }
     }
 
     let diff_token = token_removal_range.len();
@@ -1730,6 +1734,12 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
 
     for tok_term in &mut tree.tok_term[token_removal_range.start..] {
         *tok_term -= diff_token as u32;
+    }
+
+    for tok_child in &mut tree.tok_chld[token_removal_range.start..] {
+        if *tok_child > 0 {
+            *tok_child -= diff_token as u32;
+        }
     }
 
     for tok_span in &mut tree.tok_span[token_removal_range.start..] {
@@ -2481,6 +2491,7 @@ mod test {
     mod remove {
         use crate::{RemoveError, assert_tree_valid, parse, remove_index, test::extract_delimited};
 
+        #[track_caller]
         fn check(input: impl Into<String>, expected: impl Into<String>) {
             let (input, range) = extract_delimited(&input.into());
             let mut tree = parse(&input).expect("parse failed");
