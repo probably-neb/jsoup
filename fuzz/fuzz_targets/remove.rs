@@ -1,7 +1,7 @@
 #![no_main]
 
 use common::{
-    AnnotatedJSON, annotated_json, random_json, random_serde_json_value, random_value_index,
+    AnnotatedJSON, annotated_json, random_json_ast, random_serde_json_value, random_value_index,
 };
 use jsoup::{InsertionMethod, InsertionValue, serde_json};
 use libfuzzer_sys::{
@@ -18,7 +18,7 @@ struct RemoveDef {
 
 impl<'a> Arbitrary<'a> for RemoveDef {
     fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
-        let contents = random_json(rng)?;
+        let contents = random_json_ast(rng)?;
         let index = random_value_index(&contents, rng)?;
         let _annotated = annotated_json(&contents, index);
         Ok(RemoveDef {

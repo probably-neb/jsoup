@@ -1,13 +1,6 @@
 use jsoup::*;
 use libfuzzer_sys::arbitrary::{self, Unstructured};
 
-pub fn random_json(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
-    let value = random_serde_json_value(rng)?;
-    let json_contents =
-        serde_json::to_string(&value).map_err(|_| arbitrary::Error::IncorrectFormat)?;
-    return jsoup::parse(&json_contents).map_err(|_| arbitrary::Error::IncorrectFormat);
-}
-
 pub fn random_value_index(
     tree: &JsonAst,
     rng: &mut Unstructured,

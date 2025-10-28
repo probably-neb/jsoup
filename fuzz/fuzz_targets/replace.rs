@@ -1,6 +1,6 @@
 #![no_main]
 
-use common::{random_json, random_serde_json_value, random_value_index};
+use common::{random_json_ast, random_serde_json_value, random_value_index};
 use jsoup::serde_json;
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
@@ -16,7 +16,7 @@ struct ReplaceDef {
 
 impl<'a> Arbitrary<'a> for ReplaceDef {
     fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
-        let contents = random_json(rng)?;
+        let contents = random_json_ast(rng)?;
         let value = random_serde_json_value(rng)?;
         let index = random_value_index(&contents, rng)?;
         Ok(ReplaceDef {
