@@ -1104,167 +1104,146 @@ pub fn replace_index(
     target_index: usize,
     source_value: &serde_json::Value,
 ) -> Result<(), ReplaceError> {
-    let target_token_type = tree.tok_kind[target_index];
     let source_token_type = Token::from_value(source_value);
 
-    let target_is_container =
-        target_token_type == Token::Object || target_token_type == Token::Array;
-    let source_is_container =
-        source_token_type == Token::Object || source_token_type == Token::Array;
-
     let target_is_key = is_object_key(tree, target_index);
-    // if replacing key, make sure replacement is string as well
     if target_is_key && source_token_type != Token::String {
         return Err(ReplaceError::KeyMustBeString);
     }
 
     let Ok(source_contents) = serde_json::to_string(source_value) else {
-        // todo! error here?
         return Err(ReplaceError::NewValueSerializationFailure);
     };
 
-    let target_replacement_range;
-    let source_insertion_range;
-    let target_content_range;
+    let source_is_container =
+        source_token_type == Token::Object || source_token_type == Token::Array;
 
-    if !source_is_container {
-        target_replacement_range = if is_object_key(tree, target_index) {
-            EMPTY_RANGE.into()
-        } else {
-            (target_index + 1)..(tree.tok_term[target_index] as usize + 1)
-        };
-
-        source_insertion_range = target_index..target_index + 1;
-        target_content_range = tree.tok_span[target_index].clone();
-
-        tree.tok_meta.drain(target_replacement_range.clone());
-        tree.tok_kind.drain(target_replacement_range.clone());
-        tree.tok_next.drain(target_replacement_range.clone());
-        tree.tok_span.drain(target_replacement_range.clone());
-        tree.tok_term.drain(target_replacement_range.clone());
-        tree.tok_chld.drain(target_replacement_range.clone());
-
-        tree.tok_kind[target_index] = source_token_type;
-        tree.tok_meta[target_index] = 0;
-        if !target_is_key {
-            tree.tok_chld[target_index] = 0;
-            tree.tok_term[target_index] = target_index as u32;
-        }
-
-        tree.tok_span[target_index].end = target_content_range.start + source_contents.len();
-        tree.contents.splice(
-            target_content_range.clone(),
-            source_contents.as_bytes().into_iter().cloned(),
-        );
-
-        tree.tok_meta[target_index] = tok_meta_from_value(source_value);
+    let mut source_tree = if source_is_container {
+        parse(&source_contents).expect("sub_tree valid json")
     } else {
-        let mut source_tree = parse(&source_contents).expect("sub_tree valid json");
-        let offset_content = tree.tok_span[target_index].start;
-        let offset_token = target_index;
-
-        target_replacement_range = target_index..tree.tok_term[target_index] as usize + 1;
-        source_insertion_range = target_index..target_index + source_tree.next_index();
-        target_content_range = tree.tok_span[target_index].clone();
-
-        for tok_next in &mut source_tree.tok_next {
-            if *tok_next != 0 {
-                *tok_next += offset_token as u32;
-            }
-        }
-        for range in &mut source_tree.tok_span {
-            range.start += offset_content;
-            range.end += offset_content;
-        }
-        for tok_term in &mut source_tree.tok_term {
-            *tok_term += offset_token as u32;
-        }
-        for tok_chld in &mut source_tree.tok_chld {
-            if *tok_chld != 0 {
-                *tok_chld += offset_token as u32;
-            }
-        }
-
-        let tok_next_prev = tree.tok_next[target_index];
-
-        tree.tok_kind
-            .splice(target_replacement_range.clone(), source_tree.tok_kind);
-        tree.tok_span
-            .splice(target_replacement_range.clone(), source_tree.tok_span);
-        tree.tok_meta
-            .splice(target_replacement_range.clone(), source_tree.tok_meta);
-        tree.tok_next
-            .splice(target_replacement_range.clone(), source_tree.tok_next);
-        tree.tok_term
-            .splice(target_replacement_range.clone(), source_tree.tok_term);
-        tree.tok_chld
-            .splice(target_replacement_range.clone(), source_tree.tok_chld);
-        tree.contents
-            .splice(target_content_range.clone(), source_tree.contents);
-
-        if tok_next_prev != 0 {
-            tree.tok_next[target_index] = tok_next_prev;
-        }
-    }
-
-    // update tok_next
-    if target_replacement_range.len() > 0 {
-        let source_insertion_range = source_insertion_range.clone();
-        let tok_diff =
-            usize::checked_signed_diff(source_insertion_range.end, target_replacement_range.end)
-                .unwrap();
-
-        for tok_next in &mut tree.tok_next[0..=source_insertion_range.start] {
-            if *tok_next >= target_replacement_range.end as u32 {
-                add_signed_u32(tok_next, tok_diff);
-            }
-        }
-        for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
-            if *tok_next > target_replacement_range.end as u32 {
-                add_signed_u32(tok_next, tok_diff);
-            }
-        }
-
-        for tok_term in &mut tree.tok_term[0..source_insertion_range.start] {
-            if *tok_term >= source_insertion_range.start as u32 {
-                add_signed_u32(tok_term, tok_diff);
-            }
-        }
-        for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
-            add_signed_u32(tok_term, tok_diff);
-        }
-
-        for tok_child in &mut tree.tok_chld[0..source_insertion_range.start] {
-            if *tok_child >= target_replacement_range.end as u32 {
-                add_signed_u32(tok_child, tok_diff);
-            }
-        }
-        for tok_child in &mut tree.tok_chld[source_insertion_range.end..] {
-            if *tok_child >= target_replacement_range.end as u32 {
-                add_signed_u32(tok_child, tok_diff);
-            }
-        }
-    }
-
-    // update tok_span
-    {
-        let end_diff = usize::checked_signed_diff(
-            target_content_range.start + source_contents.len(),
-            target_content_range.end,
-        )
-        .unwrap();
-
-        for range in &mut tree.tok_span[0..source_insertion_range.start] {
-            if range.end > target_content_range.end {
-                add_signed(&mut range.end, end_diff);
-            }
-        }
-        for range in &mut tree.tok_span[source_insertion_range.end..] {
-            add_signed_range(range, end_diff);
+        let tok_term_val = if target_is_key {
+            tree.tok_term[target_index] - target_index as u32
+        } else {
+            0
+        };
+        let tok_chld_val = if target_is_key {
+            tree.tok_chld[target_index] - target_index as u32
+        } else {
+            0
+        };
+        JsonAst {
+            tok_span: vec![0..source_contents.len()],
+            tok_next: vec![0],
+            tok_kind: vec![source_token_type],
+            tok_meta: vec![tok_meta_from_value(source_value)],
+            tok_term: vec![tok_term_val],
+            tok_chld: vec![tok_chld_val],
+            contents: source_contents.into_bytes(),
         }
     };
 
-    return Ok(());
+    let target_replacement_range = if target_is_key {
+        target_index..target_index + 1
+    } else {
+        target_index..tree.tok_term[target_index] as usize + 1
+    };
+    let source_insertion_range = target_index..target_index + source_tree.next_index();
+    let target_content_range = tree.tok_span[target_index].clone();
+    let source_content_len = source_tree.contents.len();
+
+    let offset_content = tree.tok_span[target_index].start;
+    let offset_token = target_index;
+
+    for tok_next in &mut source_tree.tok_next {
+        if *tok_next != 0 {
+            *tok_next += offset_token as u32;
+        }
+    }
+    for range in &mut source_tree.tok_span {
+        range.start += offset_content;
+        range.end += offset_content;
+    }
+    for tok_term in &mut source_tree.tok_term {
+        *tok_term += offset_token as u32;
+    }
+    for tok_chld in &mut source_tree.tok_chld {
+        if *tok_chld != 0 {
+            *tok_chld += offset_token as u32;
+        }
+    }
+
+    let tok_next_prev = tree.tok_next[target_index];
+
+    tree.tok_kind
+        .splice(target_replacement_range.clone(), source_tree.tok_kind);
+    tree.tok_span
+        .splice(target_replacement_range.clone(), source_tree.tok_span);
+    tree.tok_meta
+        .splice(target_replacement_range.clone(), source_tree.tok_meta);
+    tree.tok_next
+        .splice(target_replacement_range.clone(), source_tree.tok_next);
+    tree.tok_term
+        .splice(target_replacement_range.clone(), source_tree.tok_term);
+    tree.tok_chld
+        .splice(target_replacement_range.clone(), source_tree.tok_chld);
+    tree.contents
+        .splice(target_content_range.clone(), source_tree.contents);
+
+    if tok_next_prev != 0 {
+        tree.tok_next[target_index] = tok_next_prev;
+    }
+
+    let tok_diff =
+        usize::checked_signed_diff(source_insertion_range.end, target_replacement_range.end)
+            .unwrap();
+
+    for tok_next in &mut tree.tok_next[0..=source_insertion_range.start] {
+        if *tok_next >= target_replacement_range.end as u32 {
+            add_signed_u32(tok_next, tok_diff);
+        }
+    }
+    for tok_next in &mut tree.tok_next[source_insertion_range.end..] {
+        if *tok_next > target_replacement_range.end as u32 {
+            add_signed_u32(tok_next, tok_diff);
+        }
+    }
+
+    for tok_term in &mut tree.tok_term[0..source_insertion_range.start] {
+        if *tok_term >= source_insertion_range.start as u32 {
+            add_signed_u32(tok_term, tok_diff);
+        }
+    }
+    for tok_term in &mut tree.tok_term[source_insertion_range.end..] {
+        add_signed_u32(tok_term, tok_diff);
+    }
+
+    for tok_child in &mut tree.tok_chld[0..source_insertion_range.start] {
+        if *tok_child >= target_replacement_range.end as u32 {
+            add_signed_u32(tok_child, tok_diff);
+        }
+    }
+    for tok_child in &mut tree.tok_chld[source_insertion_range.end..] {
+        if *tok_child >= target_replacement_range.end as u32 {
+            add_signed_u32(tok_child, tok_diff);
+        }
+    }
+
+    let end_diff = usize::checked_signed_diff(
+        target_content_range.start + source_content_len,
+        target_content_range.end,
+    )
+    .unwrap();
+
+    for range in &mut tree.tok_span[0..source_insertion_range.start] {
+        if range.end > target_content_range.end {
+            add_signed(&mut range.end, end_diff);
+        }
+    }
+    for range in &mut tree.tok_span[source_insertion_range.end..] {
+        add_signed_range(range, end_diff);
+    }
+
+    Ok(())
 }
 
 pub fn replace_path(
