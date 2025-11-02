@@ -191,7 +191,6 @@ impl JsonAstBuilder {
         }
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
-        assert!(!comment.starts_with("//"));
         for line in comment.lines() {
             self.json.push_str("// ");
             self.json.push_str(line);

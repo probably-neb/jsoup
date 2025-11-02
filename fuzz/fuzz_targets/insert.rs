@@ -38,7 +38,62 @@ impl<'a> Arbitrary<'a> for InsertDef {
     }
 }
 
+fn debug_print_as_test(data: &InsertDef) {
+    let InsertDef {
+        contents,
+        index,
+        key,
+        value,
+        method,
+    } = data;
+
+    eprintln!("check!(");
+    eprintln!("    failing_fuzz_target,");
+    let index_range = contents.tok_span[*index].clone();
+    eprint!(r##"    r#"{}<"##, unsafe {
+        std::str::from_utf8_unchecked(&contents.contents[..index_range.start])
+    });
+    eprint!("{}", unsafe {
+        std::str::from_utf8_unchecked(&contents.contents[index_range.start..index_range.end])
+    });
+    eprintln!(r##">{}"#,"##, unsafe {
+        std::str::from_utf8_unchecked(&contents.contents[index_range.end..])
+    });
+
+    let method_str = match method {
+        InsertionMethod::Before => "Before",
+        InsertionMethod::After => "After",
+        InsertionMethod::Append => "Append",
+        InsertionMethod::Prepend => "Prepend",
+    };
+    eprintln!("    {},", method_str);
+
+    match key {
+        Some(k) => {
+            eprintln!(
+                r#"    Obj(("{}", serde_json::from_str("{}").expect("valid json"))),"#,
+                k,
+                serde_json::to_string(&value).expect("serialization failed")
+            );
+        }
+        None => {
+            eprintln!(
+                r#"    Arr(serde_json::from_str("{}").expect("valid json")),"#,
+                serde_json::to_string(&value).expect("serialization failed")
+            );
+        }
+    }
+
+    eprintln!(r##"    r#"{}"#"##, unsafe {
+        std::str::from_utf8_unchecked(&contents.contents)
+    });
+    eprintln!(");");
+}
+
 fuzz_target!(|data: InsertDef| {
+    if option_env!("FUZZ_TARGET_DBG").is_some() {
+        debug_print_as_test(&data);
+    }
     let InsertDef {
         contents,
         index,
