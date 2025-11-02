@@ -132,9 +132,7 @@ impl JsonAstBuilder {
         if self.next_punctuation == NextPunctuation::Comma {
             self.json.push(',');
         }
-        self.json.push('"');
-        self.json.push_str(key);
-        self.json.push('"');
+        write_str_escaped(&mut self.json, key);
         self.state.push(State::ObjectValue);
         self.next_punctuation = NextPunctuation::Colon;
     }
@@ -144,9 +142,7 @@ impl JsonAstBuilder {
             println!("builder.string(\"{}\");", value);
         }
         self.value_start();
-        self.json.push('"');
-        self.json.push_str(value);
-        self.json.push('"');
+        write_str_escaped(&mut self.json, value);
         self.value_end();
     }
 
@@ -213,6 +209,40 @@ impl JsonAstBuilder {
         self.json.push_str(comment);
         self.json.push_str(" */");
     }
+}
+
+/// Writes a JSON-escaped string to the writer.
+/// Escapes the following characters according to JSON spec:
+/// - " (quotation mark) -> \"
+/// - \ (backslash) -> \\
+/// - / (forward slash) -> \/ (optional but supported)
+/// - \b (backspace) -> \b
+/// - \f (form feed) -> \f
+/// - \n (newline) -> \n
+/// - \r (carriage return) -> \r
+/// - \t (tab) -> \t
+/// - Control characters (U+0000 to U+001F) -> \uXXXX
+fn write_str_escaped(w: &mut String, s: &str) {
+    w.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => w.push_str("\\\""),
+            '\\' => w.push_str("\\\\"),
+            '/' => w.push_str("\\/"),
+            '\x08' => w.push_str("\\b"),
+            '\x0C' => w.push_str("\\f"),
+            '\n' => w.push_str("\\n"),
+            '\r' => w.push_str("\\r"),
+            '\t' => w.push_str("\\t"),
+            // Escape control characters (U+0000 to U+001F)
+            c if c < '\x20' => {
+                write!(w, "\\u{:04x}", c as u32).expect("fmt failed");
+            }
+            // All other characters can be written as-is
+            c => w.push(c),
+        }
+    }
+    w.push('"');
 }
 
 #[cfg(test)]
@@ -350,5 +380,28 @@ mod tests {
         },
         r#"[// F
 true]"#
+    );
+
+    check!(
+        obj_with_unescaped_string_key,
+        {
+            let mut builder = JsonAstBuilder::new();
+            builder.begin_array();
+            builder.begin_object();
+            builder.key("\"2\"2");
+            builder.null();
+            builder.line_comment(r#""#);
+            builder.end_object();
+            builder.line_comment(r#""#);
+            builder.line_comment(r#""#);
+            builder.line_comment(r#""#);
+            builder.line_comment(r#""#);
+            builder.null();
+            builder.line_comment(r#""#);
+            builder.line_comment(r#""#);
+            builder.end_array();
+            builder.build()
+        },
+        r#"[{"\"2\"2":null,},null,]"#
     );
 }

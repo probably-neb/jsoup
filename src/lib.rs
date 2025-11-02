@@ -389,7 +389,8 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     let start = *cursor;
     *cursor += 1;
     while *cursor < tree.contents.len() {
-        match tree.contents[*cursor] {
+        let ch = tree.contents[*cursor];
+        match ch {
             b'\\' => {
                 if *cursor + 1 >= tree.contents.len() {
                     return Err(ParseError::UnexpectedEndOfInput);
