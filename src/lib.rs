@@ -562,7 +562,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         tree.tok_chld[key_index] = value_index as u32;
         let value_term = tree.tok_term[value_index];
         tree.tok_term[key_index] = value_term;
-        tree.tok_term[obj_index] = value_term;
 
         let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
@@ -575,6 +574,8 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
     }
+
+    tree.tok_term[obj_index] = tree.next_index() as u32 - 1;
     // clear because we set without checking in loop
     tree.tok_next[obj_index] = 0;
 
@@ -607,7 +608,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         let value_index = tree.next_index();
         parse_value(tree, cursor)?;
         tree.tok_next[value_index_prev] = value_index as u32;
-        tree.tok_term[array_index] = tree.tok_term[value_index];
         value_index_prev = value_index;
         value_count += 1;
         if tree.tok_chld[array_index] == 0 {
@@ -624,6 +624,7 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
             return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
         }
     }
+    tree.tok_term[array_index] = tree.next_index() as u32 - 1;
     // clear because we set without checking in loop
     tree.tok_next[array_index] = 0;
 
@@ -762,10 +763,11 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
             tree.tok_term[i]
         );
         if tree.tok_next[key_index] == 0 {
-            assert_eq!(
-                tree.tok_term[key_index], tree.tok_term[i],
-                "last key's termination index {} should match object's termination index {}",
-                tree.tok_term[key_index], tree.tok_term[i]
+            assert!(
+                tree.tok_term[key_index] <= tree.tok_term[i],
+                "last key's termination index {} should not exceed object's termination index {}",
+                tree.tok_term[key_index],
+                tree.tok_term[i]
             );
         }
         key_index = tree.tok_next[key_index] as usize;
@@ -1228,11 +1230,9 @@ pub fn replace_index(
         }
     }
 
-    let end_diff = usize::checked_signed_diff(
-        target_content_range.start + source_content_len,
-        target_content_range.end,
-    )
-    .unwrap();
+    let original_end = target_content_range.end;
+    let updated_end = target_content_range.start + source_content_len;
+    let end_diff = usize::checked_signed_diff(updated_end, original_end).unwrap();
 
     for range in &mut tree.tok_span[0..source_insertion_range.start] {
         if range.end > target_content_range.end {
@@ -2137,6 +2137,22 @@ mod test {
             r#"[<null>,{"": null},null]"#,
             json!([{}]),
             r#"[[{}],{"": null},null]"#
+        );
+
+        check!(
+            arr_replace_root_with_comment,
+            r#"<[false,//
+        ]>"#,
+            json!(null),
+            "null"
+        );
+
+        check!(
+            obj_replace_root_with_comment,
+            r#"<{"key": false,//
+        }>"#,
+            json!(null),
+            "null"
         );
 
         check_fail!(
