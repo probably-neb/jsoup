@@ -1496,7 +1496,8 @@ pub fn insert_index(
         InsertionMethod::After => {
             target_tok_insertion_index = tree.tok_term[target_index] as usize + 1;
             target_content_insertion_index = if is_object_key(tree, target_index) {
-                tree.tok_span[tree.tok_term[target_index] as usize].end
+                let value_index = tree.tok_chld[target_index] as usize;
+                tree.tok_span[value_index].end
             } else {
                 tree.tok_span[target_index].end
             };
@@ -2501,6 +2502,16 @@ mod test {
             After,
             Arr(json!(null)),
             InsertionError::TargetIsNotItem
+        );
+
+        check!(
+            obj_insert_after_key_with_nested_value,
+            r#"{"`":// hhhhhe
+        [false],<"">:[[]]}"#,
+            After,
+            Obj(("", json!(true))),
+            r#"{"`":// hhhhhe
+        [false],"":[[]], "": true}"#
         );
     }
 
