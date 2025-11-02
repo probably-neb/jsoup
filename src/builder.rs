@@ -161,6 +161,7 @@ impl JsonAstBuilder {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.float({});", arg);
         }
+        assert!(arg.is_finite(), "Float is not finite");
         self.value_start();
         write!(&mut self.json, "{}", arg).unwrap();
         self.value_end();

@@ -93,11 +93,11 @@ pub fn random_json_ast_depth(
 
     // Limit choices based on depth to prevent infinite recursion
     let type_choice: u8 = if depth == 0 {
-        rng.int_in_range(4..=5)? // Only containers
+        rng.int_in_range(5..=6)? // Only containers
     } else if depth >= MAX_DEPTH {
-        rng.int_in_range(0..=3)? // Only simple types
+        rng.int_in_range(0..=4)? // Only simple types
     } else {
-        rng.int_in_range(0..=5)? // All types
+        rng.int_in_range(0..=6)? // All types
     };
 
     let _json: &str = &builder.json;
@@ -118,15 +118,15 @@ pub fn random_json_ast_depth(
         0 => builder.null(),
         1 => builder.bool(rng.arbitrary()?),
         2 => {
-            let float: bool = rng.arbitrary()?;
-            if float {
-                builder.float(rng.arbitrary()?);
-            } else {
-                builder.int(rng.arbitrary()?);
+            let mut float: f64 = rng.arbitrary()?;
+            while !float.is_finite() {
+                float = rng.arbitrary()?;
             }
+            builder.float(float)
         }
-        3 => builder.string(rng.arbitrary()?),
-        4 => {
+        3 => builder.int(rng.arbitrary()?),
+        4 => builder.string(rng.arbitrary()?),
+        5 => {
             // Array
             let len = rng.arbitrary_len::<u64>()?;
             builder.begin_array();
@@ -139,7 +139,7 @@ pub fn random_json_ast_depth(
             }
             builder.end_array();
         }
-        5 => {
+        6 => {
             // Object
             let len = rng.arbitrary_len::<u64>()?;
             builder.begin_object();
