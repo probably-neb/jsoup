@@ -5,7 +5,7 @@ pub fn random_value_index(
     tree: &JsonAst,
     rng: &mut Unstructured,
 ) -> Result<usize, arbitrary::Error> {
-    return rng.choose_index(tree.tok_kind.len());
+    rng.choose_index(tree.tok_kind.len())
 }
 
 pub fn random_serde_json_value(
@@ -203,5 +203,5 @@ pub fn annotated_json(tree: &JsonAst, index: usize) -> AnnotatedJSON {
 
     contents.insert(span.start, '<');
     contents.insert(span.end + 1, '>');
-    return AnnotatedJSON(contents);
+    AnnotatedJSON(contents)
 }

@@ -1,9 +1,8 @@
 #![no_main]
 
 use common::{
-    AnnotatedJSON, annotated_json, random_json_ast, random_serde_json_value, random_value_index,
+    AnnotatedJSON, annotated_json, random_json_ast, random_value_index,
 };
-use jsoup::{InsertionMethod, InsertionValue, serde_json};
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
     fuzz_target,

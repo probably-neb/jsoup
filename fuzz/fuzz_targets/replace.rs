@@ -1,7 +1,6 @@
 #![no_main]
 
-use common::{random_json_ast, random_serde_json_value, random_value_index};
-use jsoup::serde_json;
+use common::{random_json_ast, random_value_index};
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
     fuzz_target,
