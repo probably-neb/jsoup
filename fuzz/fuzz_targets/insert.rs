@@ -12,14 +12,14 @@ struct InsertDef {
     contents: jsoup::JsonAst,
     index: usize,
     key: Option<String>,
-    value: serde_json::Value,
+    value: jsoup::JsonAst,
     method: InsertionMethod,
 }
 
 impl<'a> Arbitrary<'a> for InsertDef {
     fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
         let contents = random_json_ast(rng)?;
-        let value = random_serde_json_value(rng)?;
+        let value = random_json_ast(rng)?;
         let index = random_value_index(&contents, rng)?;
         let method = *rng.choose(&[
             InsertionMethod::After,
@@ -71,22 +71,23 @@ fn debug_print_as_test(data: &InsertDef) {
     match key {
         Some(k) => {
             eprintln!(
-                r#"    Obj(("{}", serde_json::from_str("{}").expect("valid json"))),"#,
+                r##"    Obj(("{}", parse(r#"{}"#).expect("valid json"))),"##,
                 k,
-                serde_json::to_string(&value).expect("serialization failed")
+                std::str::from_utf8(&value.contents).expect("value is valid json")
             );
         }
         None => {
             eprintln!(
-                r#"    Arr(serde_json::from_str("{}").expect("valid json")),"#,
-                serde_json::to_string(&value).expect("serialization failed")
+                r##"    Arr(parse(r#"{}"#).expect("valid json")),"##,
+                std::str::from_utf8(&value.contents).expect("value is valid json")
             );
         }
     }
 
-    eprintln!(r##"    r#"{}"#"##, unsafe {
-        std::str::from_utf8_unchecked(&contents.contents)
-    });
+    eprintln!(
+        r##"    r#"{}"#"##,
+        std::str::from_utf8(&contents.contents).expect("contents is valid utf8")
+    );
     eprintln!(");");
 }
 
