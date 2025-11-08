@@ -77,6 +77,30 @@ impl JsonAstBuilder {
         self.write_punctuation();
     }
 
+    fn update_parent_tok_term(&mut self) {
+        let tok_term = self.json.next_index() as u32 - 1;
+
+        // Update all parent containers' tok_term
+        for state in &self.state {
+            match state {
+                State::ObjectValue {
+                    object_index,
+                    key_index,
+                } => {
+                    self.json.tok_term[*key_index] = tok_term;
+                    self.json.tok_term[*object_index] = tok_term;
+                }
+                State::Object { object_index, .. } => {
+                    self.json.tok_term[*object_index] = tok_term;
+                }
+                State::Array { array_index, .. } => {
+                    self.json.tok_term[*array_index] = tok_term;
+                }
+                State::Start => {}
+            }
+        }
+    }
+
     fn value_end(&mut self, index: usize) {
         self.next_punctuation = NextPunctuation::Comma;
 
@@ -105,6 +129,7 @@ impl JsonAstBuilder {
             } = &mut state
             {
                 if let Some(prev_item) = prev_item.as_mut() {
+                    self.json.tok_next[*prev_item] = index as u32;
                     *prev_item = index;
                 } else {
                     *prev_item = Some(index);
@@ -192,6 +217,8 @@ impl JsonAstBuilder {
         let key_index = self.json.create_string(key);
         if let Some(prev_key_index) = *prev_key_index {
             self.json.tok_next[prev_key_index] = key_index as u32;
+        } else {
+            self.json.tok_chld[*object_index] = key_index as u32;
         }
         *prev_key_index = Some(key_index);
         let object_index = *object_index;
@@ -255,18 +282,16 @@ impl JsonAstBuilder {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.line_comment(r#\"{}\"#);", comment);
         }
-        self.write_punctuation();
-        self.next_punctuation = NextPunctuation::None;
         self.json.create_line_comment(comment);
+        self.update_parent_tok_term();
     }
 
     pub fn block_comment(&mut self, comment: &str) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.block_comment(r#\"{}\"#);", comment);
         }
-        self.write_punctuation();
-        self.next_punctuation = NextPunctuation::None;
         self.json.create_block_comment(comment);
+        self.update_parent_tok_term();
     }
 
     pub fn tree(&mut self, tree: &JsonAst) {
@@ -375,10 +400,24 @@ impl JsonAst {
 
     pub fn create_line_comment(&mut self, comment: &str) -> usize {
         let start = self.contents.len();
-        for line in comment.lines() {
-            self.contents.extend_from_slice(b"// ");
-            self.contents.extend_from_slice(line.as_bytes());
+        let mut lines = comment.lines();
+        if let Some(first_line) = lines.next() {
+            self.contents.extend_from_slice(b"//");
+            if !first_line.is_empty() {
+                self.contents.push(b' ');
+            }
+            self.contents.extend_from_slice(first_line.as_bytes());
             self.contents.push(b'\n');
+            for line in lines {
+                self.contents.extend_from_slice(b"//");
+                if !line.is_empty() {
+                    self.contents.push(b' ');
+                }
+                self.contents.extend_from_slice(line.as_bytes());
+                self.contents.push(b'\n');
+            }
+        } else {
+            self.contents.extend_from_slice(b"//\n");
         }
         self.push_comment(start..self.contents.len(), false)
     }
@@ -542,8 +581,8 @@ mod tests {
             builder.end_array();
             builder.build()
         },
-        r#"[{"id":// Item ID
-1.2,"location":null,"name":/* Item Name */"Item 1"}]"#
+        r#"[{"id"// Item ID
+:1.2,"location":null,"name"/* Item Name */:"Item 1"}]"#
     );
 
     check!(
@@ -583,6 +622,13 @@ true]"#
             builder.end_array();
             builder.build()
         },
-        r#"[{"\"2\"2":null,},null,]"#
+        r#"[{"\"2\"2":null//
+}//
+//
+//
+//
+,null//
+//
+]"#
     );
 }
