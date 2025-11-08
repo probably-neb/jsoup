@@ -1443,11 +1443,6 @@ pub enum InsertionMethod {
     Prepend,
 }
 
-enum InsertionDirection {
-    Before,
-    After,
-}
-
 pub enum InsertionValue<'a> {
     Arr(serde_json::Value),
     Obj((&'a str, serde_json::Value)),

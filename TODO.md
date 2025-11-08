@@ -23,10 +23,13 @@
     * when container is empty, `tok_term[container_index] == container_index` so removal does not require any additional logic
 - [x] Builder API for simultaneous creation of formatted JSON as well as tree
   - useful for replacement APIs
-- [*] Make comments part of AST, instead of just storing separately
+- [x] Make comments part of AST, instead of just storing separately
+- [ ] Move from taking `serde_json::Value` to `JsonAst` based on builder pattern
+  - [ ] Update parsing to support non container roots
+  - [ ] make insert take `JsonAst`
+  - [ ] make replace take `JsonAst`
 - [ ] Transition `assert_*_valid` to `check_*_valid` that return results, and have `assert_*_valid` that just `.expect()`
 - [ ] Proc macro like `serde_json_lenient::json!` that lowers to builder
-- [ ] Move from taking `serde_json::Value` to `JsonAst` based on builder pattern
 - [ ] maintain formatting in updates
   - [ ] `format_style_from` that takes an index, and returns a `FormatStyle`
       * useful for limiting scope of CRUD ops, where args can be created with correct formatting before insertion
