@@ -211,8 +211,14 @@ impl JsonAstBuilder {
     }
 
     pub fn tree(&mut self, tree: &JsonAst) {
-        self.json
-            .push_str(std::str::from_utf8(&tree.contents).expect("tree contents are valid utf8"));
+        let contents_str =
+            std::str::from_utf8(&tree.contents).expect("tree contents are valid utf8");
+        if option_env!("BUILDER_DBG").is_some() {
+            println!("builder.tree(r#\"{}\"#);", contents_str);
+        }
+        self.value_start();
+        self.json.push_str(contents_str);
+        self.value_end();
     }
 }
 

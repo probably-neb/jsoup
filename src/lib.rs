@@ -657,40 +657,14 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
             *cursor += 1;
             break;
         }
-        if tree.contents[*cursor] != b'"' {
-            return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
-        }
-        let key_index = tree.next_index();
-        parse_string(tree, cursor)?;
+
+        let key_index = parse_key_value(tree, cursor)?;
         tree.tok_next[key_index_prev] = key_index as u32;
         key_index_prev = key_index;
         key_count += 1;
         if tree.tok_chld[obj_index] == 0 {
             tree.tok_chld[obj_index] = key_index as u32;
         }
-
-        let eof = parse_whitespace_or_comment(tree, cursor)?;
-        if eof {
-            return Err(ParseError::UnexpectedEndOfInput);
-        }
-
-        if tree.contents[*cursor] != b':' {
-            return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
-        }
-        *cursor += 1;
-
-        let eof = parse_whitespace_or_comment(tree, cursor)?;
-        if eof {
-            return Err(ParseError::UnexpectedEndOfInput);
-        }
-
-        let value_index = tree.next_index();
-        parse_value(tree, cursor)?;
-        // key descendant range is the value range
-        tree.tok_chld[key_index] = value_index as u32;
-        let value_term = tree.tok_term[value_index];
-        tree.tok_term[key_index] = value_term;
-
         let eof = parse_whitespace_or_comment(tree, cursor)?;
         if eof {
             return Err(ParseError::UnexpectedEndOfInput);
@@ -711,6 +685,38 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 
     tree.tok_span[obj_index].end = *cursor;
     return Ok(());
+}
+
+fn parse_key_value(tree: &mut JsonAst, cursor: &mut usize) -> Result<usize, ParseError> {
+    if tree.contents[*cursor] != b'"' {
+        return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
+    }
+    let key_index = tree.next_index();
+    parse_string(tree, cursor)?;
+
+    let eof = parse_whitespace_or_comment(tree, cursor)?;
+    if eof {
+        return Err(ParseError::UnexpectedEndOfInput);
+    }
+
+    if tree.contents[*cursor] != b':' {
+        return Err(ParseError::UnexpectedToken(tree.contents[*cursor] as char));
+    }
+    *cursor += 1;
+
+    let eof = parse_whitespace_or_comment(tree, cursor)?;
+    if eof {
+        return Err(ParseError::UnexpectedEndOfInput);
+    }
+
+    let value_index = tree.next_index();
+    parse_value(tree, cursor)?;
+    // key descendant range is the value range
+    tree.tok_chld[key_index] = value_index as u32;
+    let value_term = tree.tok_term[value_index];
+    tree.tok_term[key_index] = value_term;
+
+    return Ok(key_index);
 }
 
 fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
@@ -1509,7 +1515,11 @@ pub fn insert_index(
             builder.state.push(builder::State::Object);
             builder.key(key);
             builder.tree(&value);
-            builder.build()
+
+            let mut tree = JsonAst::empty();
+            tree.contents = builder.json.into_bytes();
+            parse_key_value(&mut tree, &mut 0).expect("Failed to parse key-value pair");
+            tree
         }
     };
 
@@ -1545,7 +1555,7 @@ pub fn insert_index(
     let target_content_insertion_index;
     // the content to insert at target_content_insertion_index
     let content_slices;
-    let comma_space = *b", ";
+    let comma = *b",";
     // The next item in the container after the newly inserted item is
     // context dependent in append, after, and prepend/append.
     let source_tok_next;
@@ -1563,9 +1573,9 @@ pub fn insert_index(
             } else {
                 tree.tok_span[target_index].end
             };
-            source_content_offset = comma_space.len();
+            source_content_offset = comma.len();
 
-            content_slices = [&comma_space, source_tree.contents.as_slice()];
+            content_slices = [&comma, source_tree.contents.as_slice()];
 
             let tok_next_prev = tree.tok_next[target_index];
             if tok_next_prev != 0 {
@@ -1578,7 +1588,7 @@ pub fn insert_index(
         InsertionMethod::Before => {
             target_tok_insertion_index = target_index;
             target_content_insertion_index = tree.tok_span[target_index].start;
-            content_slices = [source_tree.contents.as_slice(), &comma_space];
+            content_slices = [source_tree.contents.as_slice(), &comma];
             source_content_offset = 0;
             source_tok_next = (target_tok_insertion_index + source_tree.next_index()) as u32;
         }
@@ -2281,7 +2291,7 @@ mod test {
             insert_index(&mut tree, source, insertion_method, index).expect("insert failed");
             // assert_tree_valid(&tree);
 
-            let expected_tree = parse(expected).expect("parse succeeded");
+            let expected_tree = parse(expected).expect("expected is not valid json");
 
             pretty_assertions::assert_eq!(tree, expected_tree);
         }
@@ -2335,18 +2345,18 @@ mod test {
 
         check!(
             arr_nested_obj,
-            r#"[[<[]>, 1], 2]"#,
+            r#"[[<[]>,1],2]"#,
             Prepend,
-            Arr(parse(r#"{"foo": "bar"}"#).unwrap()),
-            r#"[[[{"foo":"bar"}], 1], 2]"#
+            Arr(parse(r#"{"foo":"bar"}"#).unwrap()),
+            r#"[[[{"foo":"bar"}],1],2]"#
         );
 
         check!(
             arr_after_middle,
-            r#"[1, <2>, 4]"#,
+            r#"[1,<2>,4]"#,
             After,
             Arr(parse("3").unwrap()),
-            r#"[1, 2, 3, 4]"#
+            r#"[1,2,3,4]"#
         );
 
         check!(
@@ -2354,7 +2364,7 @@ mod test {
             r#"[<1>]"#,
             After,
             Arr(parse("2").unwrap()),
-            r#"[1, 2]"#
+            r#"[1,2]"#
         );
 
         check_fail!(
@@ -2369,8 +2379,8 @@ mod test {
             arr_after_object,
             r#"[<{"foo":"bar"}>]"#,
             After,
-            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
-            r#"[{"foo":"bar"}, {"baz":"qux"}]"#
+            Arr(parse(r#"{"baz":"qux"}"#).unwrap()),
+            r#"[{"foo":"bar"},{"baz":"qux"}]"#
         );
 
         check_fail!(
@@ -2385,32 +2395,32 @@ mod test {
             arr_before_object,
             r#"[<{"foo":"bar"}>]"#,
             Before,
-            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
-            r#"[{"baz":"qux"}, {"foo":"bar"}]"#
+            Arr(parse(r#"{"baz":"qux"}"#).unwrap()),
+            r#"[{"baz":"qux"},{"foo":"bar"}]"#
         );
 
         check!(
             arr_before_nested_array,
-            r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
+            r#"[<{"foo":"bar"}>,{"baz":"qux"}]"#,
             Before,
-            Arr(parse("[1, 2]").unwrap()),
-            r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#
+            Arr(parse("[1,2]").unwrap()),
+            r#"[[1,2],{"foo":"bar"},{"baz":"qux"}]"#
         );
 
         check!(
             arr_before_end,
-            r#"[1, 2, <4>]"#,
+            r#"[1,2,<4>]"#,
             Before,
             Arr(parse("3").unwrap()),
-            r#"[1, 2, 3, 4]"#
+            r#"[1,2,3,4]"#
         );
 
         check!(
             arr_before_start,
-            r#"[<1>, 2, 3]"#,
+            r#"[<1>,2,3]"#,
             Before,
             Arr(parse("0").unwrap()),
-            r#"[0, 1, 2, 3]"#
+            r#"[0,1,2,3]"#
         );
 
         check!(
@@ -2418,31 +2428,31 @@ mod test {
             r#"[<1>]"#,
             Before,
             Arr(parse("0").unwrap()),
-            r#"[0, 1]"#
+            r#"[0,1]"#
         );
 
         check!(
             arr_before_middle,
-            r#"[0, <2>, 3]"#,
+            r#"[0,<2>,3]"#,
             Before,
             Arr(parse("1").unwrap()),
-            r#"[0, 1, 2, 3]"#
+            r#"[0,1,2,3]"#
         );
 
         check!(
             arr_prepend,
-            r#"<[1, 2, 3]>"#,
+            r#"<[1,2,3]>"#,
             Prepend,
             Arr(parse("0").unwrap()),
-            r#"[0, 1, 2, 3]"#
+            r#"[0,1,2,3]"#
         );
 
         check!(
             arr_append,
-            r#"<[1, 2, 3]>"#,
+            r#"<[1,2,3]>"#,
             Append,
             Arr(parse("4").unwrap()),
-            r#"[1, 2, 3, 4]"#
+            r#"[1,2,3,4]"#
         );
 
         check!(
@@ -2457,7 +2467,7 @@ mod test {
             arr_prepend_object_to_empty,
             r#"<[]>"#,
             Prepend,
-            Arr(parse(r#"{"foo": "bar"}"#).unwrap()),
+            Arr(parse(r#"{"foo":"bar"}"#).unwrap()),
             r#"[{"foo":"bar"}]"#
         );
 
@@ -2473,32 +2483,32 @@ mod test {
             obj_array_value_fail,
             r#"{<"foo">: "bar"}"#,
             After,
-            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
+            Arr(parse(r#"{"baz":"qux"}"#).unwrap()),
             InsertionError::IncorrectContainerType
         );
 
         check!(
             obj_after_single,
-            r#"{<"foo">: "bar"}"#,
+            r#"{<"foo">:"bar"}"#,
             After,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"foo": "bar", "baz": "qux"}"#
+            r#"{"foo":"bar","baz":"qux"}"#
         );
 
         check!(
             obj_after_first,
-            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            r#"{<"foo">:"bar","quz":"qua"}"#,
             After,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+            r#"{"foo":"bar","baz":"qux","quz":"qua"}"#
         );
 
         check!(
             obj_after_first_duplicate,
-            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            r#"{<"foo">:"bar","quz":"qua"}"#,
             After,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+            r#"{"foo":"bar","baz":"qux","quz":"qua"}"#
         );
 
         check_fail!(
@@ -2511,18 +2521,18 @@ mod test {
 
         check!(
             obj_before_first,
-            r#"{<"foo">: "bar", "quz": "qua"}"#,
+            r#"{<"foo">:"bar","quz":"qua"}"#,
             Before,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"baz": "qux", "foo": "bar", "quz": "qua"}"#
+            r#"{"baz":"qux","foo":"bar","quz":"qua"}"#
         );
 
         check!(
             obj_before_second,
-            r#"{"foo": "bar", <"quz">: "qua"}"#,
+            r#"{"foo":"bar",<"quz">:"qua"}"#,
             Before,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
+            r#"{"foo":"bar","baz":"qux","quz":"qua"}"#
         );
 
         check!(
@@ -2530,7 +2540,7 @@ mod test {
             r#"<{}>"#,
             Append,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"baz": "qux"}"#
+            r#"{"baz":"qux"}"#
         );
 
         check!(
@@ -2538,7 +2548,7 @@ mod test {
             r#"<{}>"#,
             Prepend,
             Obj(("baz", parse(r#""qux""#).unwrap())),
-            r#"{"baz": "qux"}"#
+            r#"{"baz":"qux"}"#
         );
 
         check!(
@@ -2546,7 +2556,7 @@ mod test {
             r#"<{}>"#,
             Append,
             Obj(("y\0c", parse("null").unwrap())),
-            r#"{"y\u0000c": null}"#
+            r#"{"y\u0000c":null}"#
         );
 
         check!(
@@ -2554,7 +2564,7 @@ mod test {
             r#"{"\n":false,"0":<{}>}"#,
             Append,
             Obj(("", parse("{}").unwrap())),
-            r#"{"\n":false,"0":{"": {}}}"#
+            r#"{"\n":false,"0":{"":{}}}"#
         );
 
         check_fail!(
@@ -2573,7 +2583,7 @@ mod test {
             After,
             Obj(("", parse("true").unwrap())),
             r#"{"`":// hhhhhe
-        [false],"":[[]], "": true}"#
+        [false],"":[[]],"":true}"#
         );
     }
 
