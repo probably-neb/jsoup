@@ -1241,16 +1241,16 @@ pub fn replace_index(
 ) -> Result<(), ReplaceError> {
     let target_is_key = is_object_key(tree, target_index);
 
-    let source_token_type = 'blk: {
-        for &tok in &source_tree.tok_kind {
+    let source_token_index = 'blk: {
+        for (index, &tok) in source_tree.tok_kind.iter().enumerate() {
             if tok != Token::Comment {
-                break 'blk tok;
+                break 'blk index;
             }
         }
         unimplemented!("comment only replacement");
     };
 
-    if target_is_key && source_token_type != Token::String {
+    if target_is_key && source_tree.tok_kind[source_token_index] != Token::String {
         return Err(ReplaceError::KeyMustBeString);
     }
 
@@ -1282,6 +1282,10 @@ pub fn replace_index(
         if *tok_chld != 0 {
             *tok_chld += offset_token as u32;
         }
+    }
+    if target_is_key {
+        source_tree.tok_term[source_token_index] = tree.tok_term[target_index];
+        source_tree.tok_chld[source_token_index] = tree.tok_chld[target_index];
     }
 
     let tok_next_prev = tree.tok_next[target_index];
@@ -1710,7 +1714,7 @@ pub enum RemoveError {
     InvalidTree,
 }
 
-pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), RemoveError> {
+pub fn remove_index(tree: &mut JsonAst, index: usize) -> Result<(), RemoveError> {
     if index == 0 {
         return Err(RemoveError::CannotRemoveRoot);
     }
