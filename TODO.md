@@ -24,10 +24,10 @@
 - [x] Builder API for simultaneous creation of formatted JSON as well as tree
   - useful for replacement APIs
 - [x] Make comments part of AST, instead of just storing separately
-- [ ] Move from taking `serde_json::Value` to `JsonAst` based on builder pattern
-  - [ ] Update parsing to support non container roots
-  - [ ] make insert take `JsonAst`
-  - [ ] make replace take `JsonAst`
+- [x] Move from taking `serde_json::Value` to `JsonAst` based on builder pattern
+  - [x] Update parsing to support non container roots
+  - [x] make insert take `JsonAst`
+  - [x] make replace take `JsonAst`
 - [ ] Transition `assert_*_valid` to `check_*_valid` that return results, and have `assert_*_valid` that just `.expect()`
 - [ ] Proc macro like `serde_json_lenient::json!` that lowers to builder
 - [ ] maintain formatting in updates
