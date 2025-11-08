@@ -370,11 +370,7 @@ pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
 
     let eof = parse_whitespace_or_comment(&mut tree, &mut cursor)?;
     if !eof {
-        let res = match tree.contents[cursor] {
-            b'[' => parse_array(&mut tree, &mut cursor),
-            b'{' => parse_object(&mut tree, &mut cursor),
-            _ => Err(ParseError::TODOCannotParseNonContainerRoot),
-        };
+        let res = parse_value(&mut tree, &mut cursor);
 
         tree.assert_lengths();
 
