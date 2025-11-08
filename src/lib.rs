@@ -76,6 +76,10 @@ impl JsonAst {
         }
     }
 
+    pub fn source(&self) -> &str {
+        std::str::from_utf8(&self.contents).expect("contents should always be valid UTF-8")
+    }
+
     pub fn value_at(&self, index: usize) -> &str {
         let mut range = self.tok_span[index].clone();
         if self.tok_kind[index] == Token::String {
@@ -1194,12 +1198,7 @@ pub fn replace_index(
 ) -> Result<(), ReplaceError> {
     let target_is_key = is_object_key(tree, target_index);
 
-    let source_token_index = 'blk: {
-        for (index, &tok) in source_tree.tok_kind.iter().enumerate() {
-            if tok != Token::Comment {
-                break 'blk index;
-            }
-        }
+    let Some(source_token_index) = first_non_comment_token(&source_tree) else {
         unimplemented!("comment only replacement");
     };
 
@@ -1388,14 +1387,14 @@ pub fn insert_index(
         InsertionValue::Arr(source_tree) => source_tree,
         InsertionValue::Obj((key, value)) => {
             let mut builder = JsonAstBuilder::new();
-            builder.state.push(builder::State::Object);
+            builder.state.push(builder::State::Object {
+                object_index: 0,
+                prev_key_index: None,
+            });
             builder.key(key);
             builder.tree(&value);
 
-            let mut tree = JsonAst::empty();
-            tree.contents = builder.json.into_bytes();
-            parse_key_value(&mut tree, &mut 0).expect("Failed to parse key-value pair");
-            tree
+            builder.json
         }
     };
 
@@ -1709,6 +1708,17 @@ pub fn remove_index(tree: &mut JsonAst, index: usize) -> Result<(), RemoveError>
     }
 
     Ok(())
+}
+
+fn first_non_comment_token(tree: &JsonAst) -> Option<usize> {
+    let mut index = 0;
+    while index < tree.tok_kind.len() {
+        if tree.tok_kind[index] != Token::Comment {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 fn item_container_index(tree: &JsonAst, item_index: usize) -> Option<usize> {

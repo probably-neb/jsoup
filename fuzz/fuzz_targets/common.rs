@@ -100,7 +100,7 @@ pub fn random_json_ast_depth(
         rng.int_in_range(0..=6)? // All types
     };
 
-    let _json: &str = &builder.json;
+    let _json: &str = builder.json.source();
 
     if depth > 0 {
         if rng.ratio(1, 10)? {
@@ -112,7 +112,7 @@ pub fn random_json_ast_depth(
         }
     }
 
-    let _json: &str = &builder.json;
+    let _json: &str = builder.json.source();
 
     match type_choice {
         0 => builder.null(),

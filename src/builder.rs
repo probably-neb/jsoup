@@ -5,9 +5,18 @@ use crate::*;
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum State {
     Start,
-    ObjectValue,
-    Object,
-    Array,
+    ObjectValue {
+        object_index: usize,
+        key_index: usize,
+    },
+    Object {
+        object_index: usize,
+        prev_key_index: Option<usize>,
+    },
+    Array {
+        array_index: usize,
+        prev_item_index: Option<usize>,
+    },
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -20,7 +29,7 @@ pub enum NextPunctuation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonAstBuilder {
-    pub json: String,
+    pub json: JsonAst,
     pub state: Vec<State>,
     pub next_punctuation: NextPunctuation,
 }
@@ -28,27 +37,25 @@ pub struct JsonAstBuilder {
 impl JsonAstBuilder {
     pub fn new() -> JsonAstBuilder {
         JsonAstBuilder {
-            json: String::new(),
+            json: JsonAst::empty(),
             state: vec![State::Start],
             next_punctuation: NextPunctuation::Beginning,
         }
     }
 
     pub fn build(self) -> JsonAst {
-        let json: &str = &self.json;
         if option_env!("BUILDER_DBG").is_some() {
+            let json: &str =
+                std::str::from_utf8(&self.json.contents).expect("contents are valid UTF-8");
             println!("json = r#\"\n{}\n\"#;", json);
         }
-        match crate::parse(json) {
-            Ok(tree) => tree,
-            Err(err) => panic!("Failed to parse JSON: {}. \n{}", err, self.json),
-        }
+        self.json
     }
 
     fn assert_value(&self) {
         assert!(matches!(
             self.state.last(),
-            Some(State::Start | State::ObjectValue | State::Array)
+            Some(State::Start | State::ObjectValue { .. } | State::Array { .. })
         ));
     }
 
@@ -57,10 +64,10 @@ impl JsonAstBuilder {
             NextPunctuation::Beginning => {}
             NextPunctuation::None => {}
             NextPunctuation::Colon => {
-                self.json.push(':');
+                self.json.contents.push(b':');
             }
             NextPunctuation::Comma => {
-                self.json.push(',');
+                self.json.contents.push(b',');
             }
         }
     }
@@ -70,10 +77,43 @@ impl JsonAstBuilder {
         self.write_punctuation();
     }
 
-    fn value_end(&mut self) {
+    fn value_end(&mut self, index: usize) {
         self.next_punctuation = NextPunctuation::Comma;
-        if matches!(self.state.last(), Some(State::ObjectValue)) {
-            self.state.pop();
+
+        let tok_term = self.json.next_index() as u32 - 1;
+
+        let last_state = self.state.pop();
+        if let Some(State::ObjectValue {
+            object_index,
+            key_index,
+        }) = last_state
+            && self.json.tok_kind[object_index] == Token::Object
+        {
+            self.json.tok_chld[key_index] = index as u32;
+            self.json.tok_term[key_index] = tok_term;
+            assert_eq!(
+                self.json.tok_kind[key_index],
+                Token::String,
+                "expected parent container to be an object key"
+            );
+            self.json.tok_meta[object_index] += 1;
+            self.json.tok_term[object_index] = tok_term;
+        } else if let Some(mut state) = last_state {
+            if let State::Array {
+                array_index,
+                prev_item_index: prev_item,
+            } = &mut state
+            {
+                if let Some(prev_item) = prev_item.as_mut() {
+                    *prev_item = index;
+                } else {
+                    *prev_item = Some(index);
+                    self.json.tok_chld[*array_index] = index as u32;
+                }
+                self.json.tok_term[*array_index] = tok_term;
+                self.json.tok_meta[*array_index] += 1;
+            }
+            self.state.push(state);
         }
     }
 
@@ -82,58 +122,84 @@ impl JsonAstBuilder {
             println!("builder.begin_object();");
         }
         self.value_start();
-        self.json.push('{');
-
         self.next_punctuation = NextPunctuation::None;
-        self.state.push(State::Object);
+        let object_index = self.json.create_object();
+        self.state.push(State::Object {
+            object_index,
+            prev_key_index: None,
+        });
     }
 
     pub fn end_object(&mut self) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.end_object();");
         }
-        assert!(
-            matches!(self.state.pop(), Some(State::Object)),
-            "Trying to end an object without starting it"
-        );
+        let Some(State::Object {
+            object_index,
+            prev_key_index,
+        }) = self.state.pop()
+        else {
+            unreachable!("Trying to end an object without starting it");
+        };
 
-        self.json.push('}');
-        self.value_end();
+        self.json.create_object_end(object_index);
+        self.value_end(object_index);
     }
 
     pub fn begin_array(&mut self) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.begin_array();");
         }
-        self.value_start();
-        self.json.push('[');
 
+        self.value_start();
         self.next_punctuation = NextPunctuation::None;
-        self.state.push(State::Array);
+        let array_index = self.json.create_array();
+        self.state.push(State::Array {
+            array_index,
+            prev_item_index: None,
+        });
     }
 
     pub fn end_array(&mut self) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.end_array();");
         }
-        assert!(
-            matches!(self.state.pop(), Some(State::Array)),
-            "Trying to end an array without starting it"
-        );
-        self.json.push(']');
-        self.value_end();
+        let Some(State::Array {
+            array_index,
+            prev_item_index,
+        }) = self.state.pop()
+        else {
+            unreachable!("Trying to end an array without starting it");
+        };
+        self.json.create_array_end(array_index);
+        self.value_end(array_index);
     }
 
     pub fn key(&mut self, key: &str) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.key(\"{}\");", key);
         }
-        assert!(matches!(self.state.last(), Some(State::Object)));
+        let Some(State::Object {
+            object_index,
+            prev_key_index,
+        }) = self.state.last_mut()
+        else {
+            unreachable!("Trying to add a key without starting an object")
+        };
         if self.next_punctuation == NextPunctuation::Comma {
-            self.json.push(',');
+            self.json.contents.push(b',');
         }
-        write_str_escaped(unsafe { self.json.as_mut_vec() }, key);
-        self.state.push(State::ObjectValue);
+        let key_index = self.json.create_string(key);
+        if let Some(prev_key_index) = *prev_key_index {
+            self.json.tok_next[prev_key_index] = key_index as u32;
+        }
+        *prev_key_index = Some(key_index);
+        let object_index = *object_index;
+
+        self.state.push(State::ObjectValue {
+            object_index,
+            key_index,
+        });
         self.next_punctuation = NextPunctuation::Colon;
     }
 
@@ -142,8 +208,8 @@ impl JsonAstBuilder {
             println!("builder.string(\"{}\");", value);
         }
         self.value_start();
-        write_str_escaped(unsafe { self.json.as_mut_vec() }, value);
-        self.value_end();
+        let index = self.json.create_string(value);
+        self.value_end(index);
     }
 
     // todo: i128?
@@ -152,8 +218,8 @@ impl JsonAstBuilder {
             println!("builder.int({});", arg);
         }
         self.value_start();
-        write!(&mut self.json, "{}", arg).unwrap();
-        self.value_end();
+        let index = self.json.create_int(arg);
+        self.value_end(index);
     }
 
     // todo: precision/rounding
@@ -163,8 +229,8 @@ impl JsonAstBuilder {
         }
         assert!(arg.is_finite(), "Float is not finite");
         self.value_start();
-        write!(&mut self.json, "{}", arg).unwrap();
-        self.value_end();
+        let index = self.json.create_float(arg);
+        self.value_end(index);
     }
 
     pub fn bool(&mut self, arg: bool) {
@@ -172,8 +238,8 @@ impl JsonAstBuilder {
             println!("builder.bool({});", arg);
         }
         self.value_start();
-        write!(&mut self.json, "{}", arg).unwrap();
-        self.value_end();
+        let index = self.json.create_bool(arg);
+        self.value_end(index);
     }
 
     pub fn null(&mut self) {
@@ -181,8 +247,8 @@ impl JsonAstBuilder {
             println!("builder.null();");
         }
         self.value_start();
-        self.json.push_str("null");
-        self.value_end();
+        let index = self.json.create_null();
+        self.value_end(index);
     }
 
     pub fn line_comment(&mut self, comment: &str) {
@@ -191,11 +257,7 @@ impl JsonAstBuilder {
         }
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
-        for line in comment.lines() {
-            self.json.push_str("// ");
-            self.json.push_str(line);
-            self.json.push('\n');
-        }
+        self.json.create_line_comment(comment);
     }
 
     pub fn block_comment(&mut self, comment: &str) {
@@ -204,10 +266,7 @@ impl JsonAstBuilder {
         }
         self.write_punctuation();
         self.next_punctuation = NextPunctuation::None;
-        assert!(!comment.starts_with("/*"));
-        self.json.push_str("/* ");
-        self.json.push_str(comment);
-        self.json.push_str(" */");
+        self.json.create_block_comment(comment);
     }
 
     pub fn tree(&mut self, tree: &JsonAst) {
@@ -216,20 +275,80 @@ impl JsonAstBuilder {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.tree(r#\"{}\"#);", contents_str);
         }
-        self.value_start();
-        self.json.push_str(contents_str);
-        self.value_end();
+        let first_non_comment_token = first_non_comment_token(tree);
+        if first_non_comment_token.is_some() {
+            self.value_start();
+        }
+
+        let offset_content = self.json.contents.len();
+        let offset_token = self.json.next_index();
+
+        self.json.contents.extend_from_slice(&tree.contents);
+
+        self.json.tok_span.extend_from_slice(&tree.tok_span);
+        self.json.tok_kind.extend_from_slice(&tree.tok_kind);
+        self.json.tok_meta.extend_from_slice(&tree.tok_meta);
+        self.json.tok_next.extend_from_slice(&tree.tok_next);
+        self.json.tok_term.extend_from_slice(&tree.tok_term);
+        self.json.tok_chld.extend_from_slice(&tree.tok_chld);
+
+        for tok_next in &mut self.json.tok_next[offset_token..] {
+            if *tok_next != 0 {
+                *tok_next += offset_token as u32;
+            }
+        }
+        for tok_span in &mut self.json.tok_span[offset_token..] {
+            tok_span.start += offset_content;
+            tok_span.end += offset_content;
+        }
+        for tok_term in &mut self.json.tok_term[offset_token..] {
+            *tok_term += offset_token as u32;
+        }
+        for tok_chld in &mut self.json.tok_chld[offset_token..] {
+            if *tok_chld != 0 {
+                *tok_chld += offset_token as u32;
+            }
+        }
+        if let Some(first_non_comment_token) = first_non_comment_token {
+            self.value_end(first_non_comment_token);
+        }
     }
 }
 
 impl JsonAst {
+    pub fn create_object(&mut self) -> usize {
+        let start = self.contents.len();
+        self.contents.extend_from_slice(b"{");
+        self.push_object(start..self.contents.len())
+    }
+
+    pub fn create_object_end(&mut self, object_index: usize) {
+        assert_eq!(self.tok_kind[object_index], Token::Object);
+        self.contents.push(b'}');
+        self.tok_span[object_index].end = self.contents.len();
+        self.tok_term[object_index] = self.next_index() as u32 - 1;
+    }
+
+    pub fn create_array(&mut self) -> usize {
+        let start = self.contents.len();
+        self.contents.extend_from_slice(b"[");
+        self.push_array(start..self.contents.len())
+    }
+
+    pub fn create_array_end(&mut self, array_index: usize) {
+        assert_eq!(self.tok_kind[array_index], Token::Array);
+        self.contents.push(b']');
+        self.tok_span[array_index].end = self.contents.len();
+        self.tok_term[array_index] = self.next_index() as u32 - 1;
+    }
+
     pub fn create_null(&mut self) -> usize {
         let start = self.contents.len();
         self.contents.extend_from_slice(b"null");
         self.push_null(start..self.contents.len())
     }
 
-    pub fn create_boolean(&mut self, value: bool) -> usize {
+    pub fn create_bool(&mut self, value: bool) -> usize {
         let start = self.contents.len();
         self.contents
             .extend_from_slice(if value { b"true" } else { b"false" });
@@ -252,6 +371,24 @@ impl JsonAst {
         let start = self.contents.len();
         write_str_escaped(&mut self.contents, value);
         self.push_string(start..self.contents.len())
+    }
+
+    pub fn create_line_comment(&mut self, comment: &str) -> usize {
+        let start = self.contents.len();
+        for line in comment.lines() {
+            self.contents.extend_from_slice(b"// ");
+            self.contents.extend_from_slice(line.as_bytes());
+            self.contents.push(b'\n');
+        }
+        self.push_comment(start..self.contents.len(), false)
+    }
+
+    pub fn create_block_comment(&mut self, comment: &str) -> usize {
+        let start = self.contents.len();
+        self.contents.extend_from_slice(b"/* ");
+        self.contents.extend_from_slice(comment.as_bytes());
+        self.contents.extend_from_slice(b" */");
+        self.push_comment(start..self.contents.len(), true)
     }
 }
 
