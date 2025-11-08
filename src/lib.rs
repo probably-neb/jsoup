@@ -123,6 +123,153 @@ impl JsonAst {
         self.assert_lengths();
         index
     }
+
+    pub fn push_string(&mut self, span: Range<usize>) -> usize {
+        assert!(
+            span.len() >= 2,
+            "String span must be at least 2 bytes for quotes"
+        );
+        assert_eq!(
+            self.contents[span.start], b'"',
+            "String must start with quote"
+        );
+        assert_eq!(
+            self.contents[span.end - 1],
+            b'"',
+            "String must end with quote"
+        );
+        let index = self.reserve(Token::String);
+        self.tok_span[index] = span;
+        index
+    }
+
+    pub fn push_comment(&mut self, span: Range<usize>, is_block: bool) -> usize {
+        if is_block {
+            assert!(
+                span.len() >= 4,
+                "Block comment must be at least 4 bytes for /**/"
+            );
+            assert_eq!(
+                &self.contents[span.start..span.start + 2],
+                b"/*",
+                "Block comment must start with /*"
+            );
+            assert_eq!(
+                &self.contents[span.end - 2..span.end],
+                b"*/",
+                "Block comment must end with */"
+            );
+        } else {
+            assert!(
+                span.len() >= 2,
+                "Line comment must be at least 2 bytes for //"
+            );
+            assert_eq!(
+                &self.contents[span.start..span.start + 2],
+                b"//",
+                "Line comment must start with //"
+            );
+        }
+        let index = self.reserve(Token::Comment);
+        self.tok_span[index] = span;
+        self.tok_meta[index] = if is_block {
+            META_COMMENT_BLOCK
+        } else {
+            META_COMMENT_LINE
+        };
+        index
+    }
+
+    pub fn push_null(&mut self, span: Range<usize>) -> usize {
+        assert_eq!(span.len(), 4, "Null span must be exactly 4 bytes");
+        assert_eq!(
+            &self.contents[span.clone()],
+            b"null",
+            "Null token must contain 'null'"
+        );
+        let index = self.reserve(Token::Null);
+        self.tok_span[index] = span;
+        index
+    }
+
+    pub fn push_boolean(&mut self, span: Range<usize>) -> usize {
+        let content = &self.contents[span.clone()];
+        assert!(
+            content == b"true" || content == b"false",
+            "Boolean token must contain 'true' or 'false'"
+        );
+        assert!(
+            span.len() == 4 || span.len() == 5,
+            "Boolean span must be 4 bytes for 'true' or 5 bytes for 'false'"
+        );
+        let index = self.reserve(Token::Boolean);
+        self.tok_span[index] = span;
+        index
+    }
+
+    pub fn push_int(&mut self, span: Range<usize>, is_negative: bool) -> usize {
+        assert!(!span.is_empty(), "Integer span cannot be empty");
+        let has_minus = self.contents[span.start] == b'-';
+        assert_eq!(
+            is_negative, has_minus,
+            "is_negative argument must match whether content starts with '-'"
+        );
+        let index = self.reserve(Token::Number);
+        self.tok_span[index] = span;
+        let mut meta = 0;
+        if is_negative {
+            meta |= META_NUM_NEGATIVE;
+        }
+        self.tok_meta[index] = meta;
+        index
+    }
+
+    pub fn push_float(&mut self, span: Range<usize>, is_negative: bool) -> usize {
+        assert!(!span.is_empty(), "Float span cannot be empty");
+        let has_minus = self.contents[span.start] == b'-';
+        assert_eq!(
+            is_negative, has_minus,
+            "is_negative argument must match whether content starts with '-'"
+        );
+        let content = &self.contents[span.clone()];
+        let has_float_indicator =
+            content.contains(&b'.') || content.contains(&b'e') || content.contains(&b'E');
+        assert!(has_float_indicator, "Float must contain '.', 'e', or 'E'");
+        let index = self.reserve(Token::Number);
+        self.tok_span[index] = span;
+        let mut meta = META_NUM_FLOAT;
+        if is_negative {
+            meta |= META_NUM_NEGATIVE;
+        }
+        self.tok_meta[index] = meta;
+        index
+    }
+
+    pub fn push_object(&mut self, span: Range<usize>) -> usize {
+        // Objects are initially created with empty spans, then updated later
+        if !span.is_empty() {
+            assert_eq!(
+                self.contents[span.start], b'{',
+                "Object span must start with '{{' if non-empty"
+            );
+        }
+        let index = self.reserve(Token::Object);
+        self.tok_span[index] = span;
+        index
+    }
+
+    pub fn push_array(&mut self, span: Range<usize>) -> usize {
+        // Arrays are initially created with empty spans, then updated later
+        if !span.is_empty() {
+            assert_eq!(
+                self.contents[span.start], b'[',
+                "Array span must start with '[' if non-empty"
+            );
+        }
+        let index = self.reserve(Token::Array);
+        self.tok_span[index] = span;
+        index
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -291,10 +438,8 @@ fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Pars
                 *cursor += 2;
                 while *cursor <= tree.contents.len() {
                     if *cursor == tree.contents.len() || tree.contents[*cursor] == b'\n' {
-                        let index = tree.reserve(Token::Comment);
-                        tree.tok_meta[index] = META_COMMENT_LINE;
-                        tree.tok_span[index].start = start;
-                        tree.tok_span[index].end = usize::min(*cursor + 1, tree.contents.len());
+                        let range = start..usize::min(*cursor + 1, tree.contents.len());
+                        tree.push_comment(range, false);
                         break;
                     }
 
@@ -314,10 +459,7 @@ fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Pars
                         if tree.contents[*cursor + 1] == b'/' {
                             assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'*', b'/']);
                             *cursor += 2;
-                            let index = tree.reserve(Token::Comment);
-                            tree.tok_meta[index] = META_COMMENT_BLOCK;
-                            tree.tok_span[index].start = start;
-                            tree.tok_span[index].end = *cursor;
+                            tree.push_comment(start..*cursor, true);
                             found = true;
                             break;
                         }
@@ -345,8 +487,7 @@ fn parse_null(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b'n', b'u', b'l', b'l'] {
         return Err(ParseError::InvalidNull);
     }
-    let index = tree.reserve(Token::Null);
-    tree.tok_span[index] = *cursor..*cursor + 4;
+    tree.push_null(*cursor..*cursor + 4);
     *cursor += 4;
     Ok(())
 }
@@ -359,8 +500,7 @@ fn parse_true(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> 
     if &tree.contents[*cursor..*cursor + 4] != [b't', b'r', b'u', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
-    let index = tree.reserve(Token::Boolean);
-    tree.tok_span[index] = *cursor..*cursor + 4;
+    tree.push_boolean(*cursor..*cursor + 4);
     *cursor += 4;
     Ok(())
 }
@@ -374,8 +514,7 @@ fn parse_false(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     if &tree.contents[*cursor..*cursor + 5] != [b'f', b'a', b'l', b's', b'e'] {
         return Err(ParseError::InvalidBoolean);
     }
-    let index = tree.reserve(Token::Boolean);
-    tree.tok_span[index] = *cursor..*cursor + 5;
+    tree.push_boolean(*cursor..*cursor + 5);
     *cursor += 5;
     Ok(())
 }
@@ -402,8 +541,7 @@ fn parse_string(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
                 let range = start..*cursor;
                 assert_eq!(tree.contents[range.start], b'"');
                 assert_eq!(tree.contents[range.end - 1], b'"');
-                let index = tree.reserve(Token::String);
-                tree.tok_span[index] = range;
+                tree.push_string(range);
                 return Ok(());
             }
             _ => *cursor += 1,
@@ -473,17 +611,11 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         return Err(ParseError::InvalidNumber);
     }
 
-    let mut meta = 0;
-    if is_negative {
-        meta |= META_NUM_NEGATIVE;
-    }
     if is_float {
-        meta |= META_NUM_FLOAT;
+        tree.push_float(start..*cursor, is_negative);
+    } else {
+        tree.push_int(start..*cursor, is_negative);
     }
-
-    let index = tree.reserve(Token::Number);
-    tree.tok_span[index] = start..*cursor;
-    tree.tok_meta[index] = meta;
     Ok(())
 }
 
@@ -513,8 +645,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     if *cursor + 1 > tree.contents.len() {
         return Err(ParseError::UnexpectedEndOfInput);
     }
-    let obj_index = tree.reserve(Token::Object);
-    tree.tok_span[obj_index] = *cursor..*cursor;
+    let obj_index = tree.push_object(*cursor..*cursor);
 
     *cursor += 1;
 
@@ -589,8 +720,7 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
 fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError> {
     tree.assert_lengths();
     assert_eq!(tree.contents[*cursor], b'[');
-    let array_index = tree.reserve(Token::Array);
-    tree.tok_span[array_index] = *cursor..*cursor;
+    let array_index = tree.push_array(*cursor..*cursor);
 
     *cursor += 1;
 
