@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::{fmt::Write as _, io::Write as _};
 
 use crate::*;
 
@@ -132,7 +132,7 @@ impl JsonAstBuilder {
         if self.next_punctuation == NextPunctuation::Comma {
             self.json.push(',');
         }
-        write_str_escaped(&mut self.json, key);
+        write_str_escaped(unsafe { self.json.as_mut_vec() }, key);
         self.state.push(State::ObjectValue);
         self.next_punctuation = NextPunctuation::Colon;
     }
@@ -142,7 +142,7 @@ impl JsonAstBuilder {
             println!("builder.string(\"{}\");", value);
         }
         self.value_start();
-        write_str_escaped(&mut self.json, value);
+        write_str_escaped(unsafe { self.json.as_mut_vec() }, value);
         self.value_end();
     }
 
@@ -222,6 +222,39 @@ impl JsonAstBuilder {
     }
 }
 
+impl JsonAst {
+    pub fn create_null(&mut self) -> usize {
+        let start = self.contents.len();
+        self.contents.extend_from_slice(b"null");
+        self.push_null(start..self.contents.len())
+    }
+
+    pub fn create_boolean(&mut self, value: bool) -> usize {
+        let start = self.contents.len();
+        self.contents
+            .extend_from_slice(if value { b"true" } else { b"false" });
+        self.push_boolean(start..self.contents.len())
+    }
+
+    pub fn create_int(&mut self, value: i64) -> usize {
+        let start = self.contents.len();
+        write!(&mut self.contents, "{}", value).expect("format of int failed");
+        self.push_int(start..self.contents.len(), value < 0)
+    }
+
+    pub fn create_float(&mut self, value: f64) -> usize {
+        let start = self.contents.len();
+        write!(&mut self.contents, "{}", value).expect("format of float failed");
+        self.push_float(start..self.contents.len(), value < 0.0)
+    }
+
+    pub fn create_string(&mut self, value: &str) -> usize {
+        let start = self.contents.len();
+        write_str_escaped(&mut self.contents, value);
+        self.push_string(start..self.contents.len())
+    }
+}
+
 /// Writes a JSON-escaped string to the writer.
 /// Escapes the following characters according to JSON spec:
 /// - " (quotation mark) -> \"
@@ -233,27 +266,27 @@ impl JsonAstBuilder {
 /// - \r (carriage return) -> \r
 /// - \t (tab) -> \t
 /// - Control characters (U+0000 to U+001F) -> \uXXXX
-fn write_str_escaped(w: &mut String, s: &str) {
-    w.push('"');
+fn write_str_escaped(w: &mut Vec<u8>, s: &str) {
+    w.push(b'"');
     for ch in s.chars() {
         match ch {
-            '"' => w.push_str("\\\""),
-            '\\' => w.push_str("\\\\"),
-            '/' => w.push_str("\\/"),
-            '\x08' => w.push_str("\\b"),
-            '\x0C' => w.push_str("\\f"),
-            '\n' => w.push_str("\\n"),
-            '\r' => w.push_str("\\r"),
-            '\t' => w.push_str("\\t"),
+            '"' => w.extend_from_slice(b"\\\""),
+            '\\' => w.extend_from_slice(b"\\\\"),
+            '/' => w.extend_from_slice(b"\\/"),
+            '\x08' => w.extend_from_slice(b"\\b"),
+            '\x0C' => w.extend_from_slice(b"\\f"),
+            '\n' => w.extend_from_slice(b"\\n"),
+            '\r' => w.extend_from_slice(b"\\r"),
+            '\t' => w.extend_from_slice(b"\\t"),
             // Escape control characters (U+0000 to U+001F)
             c if c < '\x20' => {
                 write!(w, "\\u{:04x}", c as u32).expect("fmt failed");
             }
             // All other characters can be written as-is
-            c => w.push(c),
+            c => w.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
         }
     }
-    w.push('"');
+    w.push(b'"');
 }
 
 #[cfg(test)]
