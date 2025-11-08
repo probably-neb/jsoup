@@ -1237,45 +1237,22 @@ pub enum ReplaceError {
 pub fn replace_index(
     tree: &mut JsonAst,
     target_index: usize,
-    source_value: &serde_json::Value,
+    mut source_tree: JsonAst,
 ) -> Result<(), ReplaceError> {
-    let source_token_type = Token::from_value(source_value);
-
     let target_is_key = is_object_key(tree, target_index);
+
+    let source_token_type = 'blk: {
+        for &tok in &source_tree.tok_kind {
+            if tok != Token::Comment {
+                break 'blk tok;
+            }
+        }
+        unimplemented!("comment only replacement");
+    };
+
     if target_is_key && source_token_type != Token::String {
         return Err(ReplaceError::KeyMustBeString);
     }
-
-    let Ok(source_contents) = serde_json::to_string(source_value) else {
-        return Err(ReplaceError::NewValueSerializationFailure);
-    };
-
-    let source_is_container =
-        source_token_type == Token::Object || source_token_type == Token::Array;
-
-    let mut source_tree = if source_is_container {
-        parse(&source_contents).expect("sub_tree valid json")
-    } else {
-        let tok_term_val = if target_is_key {
-            tree.tok_term[target_index] - target_index as u32
-        } else {
-            0
-        };
-        let tok_chld_val = if target_is_key {
-            tree.tok_chld[target_index] - target_index as u32
-        } else {
-            0
-        };
-        JsonAst {
-            tok_span: vec![0..source_contents.len()],
-            tok_next: vec![0],
-            tok_kind: vec![source_token_type],
-            tok_meta: vec![tok_meta_from_value(source_value)],
-            tok_term: vec![tok_term_val],
-            tok_chld: vec![tok_chld_val],
-            contents: source_contents.into_bytes(),
-        }
-    };
 
     let target_replacement_range = if target_is_key {
         target_index..target_index + 1
@@ -1382,12 +1359,9 @@ pub fn replace_index(
 pub fn replace_path(
     tree: &mut JsonAst,
     path: &Path,
-    source_value: &serde_json::Value,
+    source_value: JsonAst,
     target: ReplaceTarget,
 ) -> Result<(), ReplaceError> {
-    if target == ReplaceTarget::Key && !source_value.is_string() {
-        return Err(ReplaceError::KeyMustBeString);
-    }
     let Some(target_index) = index_for_path(tree, path, target) else {
         return Err(ReplaceError::InvalidPath);
     };
@@ -1747,7 +1721,7 @@ pub fn remove_index(tree: &mut crate::JsonAst, index: usize) -> Result<(), Remov
     let parent_index = item_parent_index(tree, index);
 
     if let Some(_key_index) = parent_index.filter(|&i| is_object_key(tree, i)) {
-        if replace_index(tree, index, &serde_json::json!(null)).is_ok() {
+        if replace_index(tree, index, parse("null").unwrap()).is_ok() {
             return Ok(());
         } else {
             // todo! better error
@@ -2060,10 +2034,9 @@ mod test {
 
     mod replace {
         use super::*;
-        use serde_json::json;
 
         #[track_caller]
-        fn check(target: &str, source: serde_json::Value, expected: &str) {
+        fn check(target: &str, source: JsonAst, expected: &str) {
             let (target, item_range) = extract_delimited(target);
 
             let mut tree = parse(&target).expect("parse succeeded");
@@ -2075,7 +2048,7 @@ mod test {
                 .position(|range| range == &item_range)
                 .expect("index found");
 
-            replace_index(&mut tree, index, &source).expect("replace failed");
+            replace_index(&mut tree, index, source).expect("replace failed");
 
             // todo! parsing non container root
             match parse(&expected) {
@@ -2097,7 +2070,7 @@ mod test {
         }
 
         #[track_caller]
-        fn check_fail(target: &str, source: serde_json::Value, expected_err: ReplaceError) {
+        fn check_fail(target: &str, source: JsonAst, expected_err: ReplaceError) {
             let (target, item_range) = extract_delimited(target);
 
             let mut tree = parse(&target).expect("parse succeeded");
@@ -2110,7 +2083,7 @@ mod test {
                 .expect("index found");
 
             let err =
-                replace_index(&mut tree, index, &source).expect_err("expected replace to fail");
+                replace_index(&mut tree, index, source).expect_err("expected replace to fail");
             assert_eq!(err, expected_err);
             assert_tree_valid(&tree);
 
@@ -2131,136 +2104,136 @@ mod test {
 
         check!(
             obj_value_string,
-            r#"{ "key": <"value"> }"#,
-            json!("new_value"),
-            r#"{ "key": "new_value" }"#
+            r#"{"key":<"value">}"#,
+            parse(r#""new_value""#).unwrap(),
+            r#"{"key":"new_value"}"#
         );
 
         check!(
             obj_value_number,
-            r#"{ "key": <"value"> }"#,
-            json!(3.1459),
-            r#"{ "key": 3.1459 }"#
+            r#"{"key":<"value">}"#,
+            parse(r#"3.1459"#).unwrap(),
+            r#"{"key":3.1459}"#
         );
 
         check!(
             obj_value_negative_zero,
-            r#"{ "key": <"value"> }"#,
-            json!(-0.0),
-            r#"{ "key": -0.0 }"#
+            r#"{"key":<"value">}"#,
+            parse(r#"-0.0"#).unwrap(),
+            r#"{"key":-0.0}"#
         );
 
         check!(
             obj_value_array,
-            r#"{ "key": <"value"> }"#,
-            json!([true]),
-            r#"{ "key": [true] }"#
+            r#"{"key":<"value">}"#,
+            parse(r#"[true]"#).unwrap(),
+            r#"{"key":[true]}"#
         );
 
         check!(
             obj_value_nested_object,
-            r#"{ "key": <"value">, "key2": "value2" }"#,
-            json!({"sub_key": "sub_value"}),
-            r#"{ "key": {"sub_key":"sub_value"}, "key2": "value2" }"#
+            r#"{"key":<"value">,"key2":"value2"}"#,
+            parse(r#"{"sub_key":"sub_value"}"#).unwrap(),
+            r#"{"key":{"sub_key":"sub_value"},"key2":"value2"}"#
         );
 
         check!(
             obj_key_simple,
-            r#"{<"key">: "value"}"#,
-            json!("new_key"),
-            r#"{"new_key": "value"}"#
+            r#"{<"key">:"value"}"#,
+            parse(r#""new_key""#).unwrap(),
+            r#"{"new_key":"value"}"#
         );
 
         check!(
             obj_key_middle,
-            r#"{"a": 1, <"b">: 2, "c": 3}"#,
-            json!("d"),
-            r#"{"a": 1, "d": 2, "c": 3}"#
+            r#"{"a":1,<"b">:2,"c":3}"#,
+            parse(r#""d""#).unwrap(),
+            r#"{"a":1,"d":2,"c":3}"#
         );
 
         check!(
             obj_key_to_empty_string,
             r#"{"a":<{"a":null,"b":null}>,"b":{"":""}}"#,
-            json!(""),
+            parse(r#""""#).unwrap(),
             r#"{"a":"","b":{"":""}}"#
         );
 
         check!(
             obj_root,
-            r#"<{ "key": "value", "key2": "value2" }>"#,
-            json!(true),
+            r#"<{"key":"value","key2":"value2"}>"#,
+            parse(r#"true"#).unwrap(),
             "true"
         );
 
         check!(
             arr_value_object_to_array,
-            r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
-            json!([2]),
-            r#"[1, [2], 3, 4, 5]"#
+            r#"[1,<{"key":"value"}>,3,4,5]"#,
+            parse(r#"[2]"#).unwrap(),
+            r#"[1,[2],3,4,5]"#
         );
 
         check!(
             arr_value_object_to_number,
-            r#"[1, <{"key": "value"}>, 3, 4, 5]"#,
-            json!(2),
-            r#"[1, 2, 3, 4, 5]"#
+            r#"[1,<{"key":"value"}>,3,4,5]"#,
+            parse(r#"2"#).unwrap(),
+            r#"[1,2,3,4,5]"#
         );
 
         check!(
             arr_value_null_to_array,
-            r#"[<null>,{"": null},null]"#,
-            json!([{}]),
-            r#"[[{}],{"": null},null]"#
+            r#"[<null>,{"":null},null]"#,
+            parse(r#"[{}]"#).unwrap(),
+            r#"[[{}],{"":null},null]"#
         );
 
         check!(
             arr_replace_root_with_comment,
             r#"<[false,//
-        ]>"#,
-            json!(null),
+]>"#,
+            parse(r#"null"#).unwrap(),
             "null"
         );
 
         check!(
             obj_replace_root_with_comment,
-            r#"<{"key": false,//
-        }>"#,
-            json!(null),
+            r#"<{"key":false,//
+}>"#,
+            parse(r#"null"#).unwrap(),
             "null"
         );
 
         check_fail!(
             obj_key_non_string_fail,
-            r#"{<"key">: "value"}"#,
-            json!(123),
+            r#"{<"key">:"value"}"#,
+            parse(r#"123"#).unwrap(),
             ReplaceError::KeyMustBeString
         );
 
         check_fail!(
             obj_key_array_fail,
-            r#"{"a": 1, <"b">: 2, "c": 3}"#,
-            json!([1, 2, 3]),
+            r#"{"a":1,<"b">:2,"c":3}"#,
+            parse(r#"[1,2,3]"#).unwrap(),
             ReplaceError::KeyMustBeString
         );
 
         check_fail!(
             obj_key_object_fail,
-            r#"{<"old_key">: "value"}"#,
-            json!({"new": "key"}),
+            r#"{<"old_key">:"value"}"#,
+            parse(r#"{"new":"key"}"#).unwrap(),
             ReplaceError::KeyMustBeString
         );
 
         check_fail!(
             obj_key_null_fail,
-            r#"{<"key">: "value"}"#,
-            json!(null),
+            r#"{<"key">:"value"}"#,
+            parse(r#"null"#).unwrap(),
             ReplaceError::KeyMustBeString
         );
 
         check_fail!(
             obj_key_boolean_fail,
-            r#"{"a": 1, <"key">: 2}"#,
-            json!(true),
+            r#"{"a":1,<"key">:2}"#,
+            parse(r#"true"#).unwrap(),
             ReplaceError::KeyMustBeString
         );
     }
