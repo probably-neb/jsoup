@@ -1,5 +1,4 @@
 #![feature(iter_array_chunks)]
-#![feature(unsigned_signed_diff)]
 
 mod builder;
 pub use builder::*;
