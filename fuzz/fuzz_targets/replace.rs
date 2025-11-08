@@ -11,13 +11,13 @@ use libfuzzer_sys::{
 struct ReplaceDef {
     contents: jsoup::JsonAst,
     index: usize,
-    value: serde_json::Value,
+    value: jsoup::JsonAst,
 }
 
 impl<'a> Arbitrary<'a> for ReplaceDef {
     fn arbitrary(rng: &mut Unstructured) -> arbitrary::Result<Self> {
         let contents = random_json_ast(rng)?;
-        let value = random_serde_json_value(rng)?;
+        let value = random_json_ast(rng)?;
         let index = random_value_index(&contents, rng)?;
         Ok(ReplaceDef {
             contents,
@@ -37,22 +37,27 @@ fn debug_print_as_test(data: &ReplaceDef) {
     eprintln!("check!(");
     eprintln!("    failing_fuzz_target,");
     let index_range = contents.tok_span[*index].clone();
-    eprint!(r##"    r#"{}<"##, unsafe {
-        std::str::from_utf8_unchecked(&contents.contents[..index_range.start])
-    });
-    eprint!("{}", unsafe {
-        std::str::from_utf8_unchecked(&contents.contents[index_range.start..index_range.end])
-    });
-    eprintln!(r##">{}"#,"##, unsafe {
-        std::str::from_utf8_unchecked(&contents.contents[index_range.end..])
-    });
-    eprintln!(
-        r#"    serde_json::from_str("{}").expect("valid json"),"#,
-        serde_json::to_string(&value).expect("serialization failed")
+    eprint!(
+        r##"    r#"{}<"##,
+        std::str::from_utf8(&contents.contents[..index_range.start]).expect("serialization failed")
     );
-    eprintln!(r##"    r#"{}"#"##, unsafe {
-        std::str::from_utf8_unchecked(&contents.contents)
-    });
+    eprint!(
+        "{}",
+        std::str::from_utf8(&contents.contents[index_range.start..index_range.end])
+            .expect("serialization failed")
+    );
+    eprintln!(
+        r##">{}"#,"##,
+        std::str::from_utf8(&contents.contents[index_range.end..]).expect("serialization failed")
+    );
+    eprintln!(
+        r##"    parse(r#"{}"#).expect("valid json"),"##,
+        std::str::from_utf8(&value.contents).expect("serialization failed")
+    );
+    eprintln!(
+        r##"    r#"{}"#"##,
+        std::str::from_utf8(&contents.contents).expect("serialization failed")
+    );
     eprintln!(");");
 }
 
@@ -70,7 +75,7 @@ fuzz_target!(|data: ReplaceDef| {
 
     let mut tree = contents;
 
-    let did_replace = jsoup::replace_index(&mut tree, index, &value).is_ok();
+    let did_replace = jsoup::replace_index(&mut tree, index, value).is_ok();
     // should never make a valid tree invalid
     jsoup::assert_tree_valid(&tree);
     if !did_replace {
