@@ -1020,25 +1020,6 @@ pub fn assert_tree_valid(tree: &JsonAst) {
     }
 }
 
-#[derive(Debug)]
-pub struct Node<'a> {
-    pub kind: Token,
-    pub meta: u32,
-    pub span: Range<usize>,
-    pub value: &'a str,
-}
-
-impl<'a> Node<'a> {
-    pub fn from_tree(tree: &'a JsonAst, index: usize) -> Self {
-        return Self {
-            kind: tree.tok_kind[index],
-            meta: tree.tok_meta[index],
-            span: tree.tok_span[index].clone(),
-            value: tree.value_for_char_range(&tree.tok_span[index]),
-        };
-    }
-}
-
 pub struct ObjectItemIter<'a> {
     tree: &'a JsonAst,
     key_index: usize,

@@ -1,3 +1,41 @@
+- [ ] Make builder API build ast instead of parsing
+  - [ ] make `create_*` helpers
+- [ ] maintain formatting in updates
+  - [ ] `format_style_from` that takes an index, and returns a `FormatStyle`
+      * useful for limiting scope of CRUD ops, where args can be created with correct formatting before insertion
+      * probably only makes sense for containers.
+      * Has easy progression to cached format style saving, as can assert that cached value equals inferred value in `format_style_from`
+  - [ ] `reformat` helper that takes formatting style and index and applies formatting
+  - [ ] Make update functions use format style to maintain formatting
+- [ ] Add `tok_cmma` to store index of comma after `index`
+    * will avoid issues found in Zed where we have to parse comma location without knowing if it's in comment
+- [ ] Add benchmarks
+  - before unifying update logic
+  - options
+    * insert 1000 values into array
+    * insert values into very deeply nested value
+- [ ] Cursor API for traversal
+- [ ] explore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
+- [ ] improve update efficiency
+    * avoiding allocating new values as much as possible
+      * convert `serde::Value` to tree directly (tied to maintaining formatting in updates)
+    * JsonAstRef type with `&'tree []` types?
+- [ ] Deeper serde interop
+  - `From<JsonAst> for serde_json::Value`
+  - `From<serde_json::Value> for JsonAst`
+  - can then simplify insert, replace, remove, etc to take trees instead
+  - if have `format_style_from` then these should take `FormatStyle`
+- [ ] Error recovering parsing
+  - goal is to parse as much as possible while marking sub regions as errors
+  - return type becomes `(tree, List<Error>)` always
+- [ ] JSON5 parsing
+- [?] maintaining comments in objects when replacing object with very similar object
+  - i.e. obj merge
+- [ ] Transition `assert_*_valid` to `check_*_valid` that return results, and have `assert_*_valid` that just `.expect()`
+- [ ] Proc macro like `serde_json_lenient::json!` that lowers to builder
+
+## DONE
+
 - [x] Replacing collections
   - [x] consolidate code paths for splicing and updating ranges
 - [x] `insert`
@@ -28,33 +66,3 @@
   - [x] Update parsing to support non container roots
   - [x] make insert take `JsonAst`
   - [x] make replace take `JsonAst`
-- [ ] Transition `assert_*_valid` to `check_*_valid` that return results, and have `assert_*_valid` that just `.expect()`
-- [ ] Proc macro like `serde_json_lenient::json!` that lowers to builder
-- [ ] maintain formatting in updates
-  - [ ] `format_style_from` that takes an index, and returns a `FormatStyle`
-      * useful for limiting scope of CRUD ops, where args can be created with correct formatting before insertion
-      * probably only makes sense for containers.
-- [ ] Add `tok_cmma` to store index of comma after `index`
-    * will avoid issues found in Zed where we have to parse comma location without knowing if it's in comment
-- [ ] Add benchmarks
-  - before unifying update logic
-  - options
-    * insert 1000 values into array
-    * insert values into very deeply nested value
-- [ ] Cursor API for traversal
-- [ ] explore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
-- [ ] improve update efficiency
-    * avoiding allocating new values as much as possible
-      * convert `serde::Value` to tree directly (tied to maintaining formatting in updates)
-    * JsonAstRef type with `&'tree []` types?
-- [ ] Deeper serde interop
-  - `From<JsonAst> for serde_json::Value`
-  - `From<serde_json::Value> for JsonAst`
-  - can then simplify insert, replace, remove, etc to take trees instead
-  - if have `format_style_from` then these should take `FormatStyle`
-- [ ] Error recovering parsing
-  - goal is to parse as much as possible while marking sub regions as errors
-  - return type becomes `(tree, List<Error>)` always
-- [ ] JSON5 parsing
-- [?] maintaining comments in objects when replacing object with very similar object
-  - i.e. obj merge

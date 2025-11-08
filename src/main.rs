@@ -1,6 +1,9 @@
+#[allow(unused)]
 const JSON_SETTINGS: &'static str = include_str!("./settings.jsonc");
+#[allow(unused)]
 const JSON_KEYMAP: &'static str = include_str!("./keymap.jsonc");
 
+#[allow(unused)]
 const JSON_SMOL: &'static str = r#"
 // 1
 { // 2
