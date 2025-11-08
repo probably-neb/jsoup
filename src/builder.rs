@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use crate::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-enum State {
+pub enum State {
     Start,
     ObjectValue,
     Object,
@@ -11,7 +11,7 @@ enum State {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum NextPunctuation {
+pub enum NextPunctuation {
     Beginning,
     None,
     Colon,
@@ -21,8 +21,8 @@ enum NextPunctuation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonAstBuilder {
     pub json: String,
-    state: Vec<State>,
-    next_punctuation: NextPunctuation,
+    pub state: Vec<State>,
+    pub next_punctuation: NextPunctuation,
 }
 
 impl JsonAstBuilder {
@@ -208,6 +208,11 @@ impl JsonAstBuilder {
         self.json.push_str("/* ");
         self.json.push_str(comment);
         self.json.push_str(" */");
+    }
+
+    pub fn tree(&mut self, tree: &JsonAst) {
+        self.json
+            .push_str(std::str::from_utf8(&tree.contents).expect("tree contents are valid utf8"));
     }
 }
 
