@@ -1444,8 +1444,8 @@ pub enum InsertionMethod {
 }
 
 pub enum InsertionValue<'a> {
-    Arr(serde_json::Value),
-    Obj((&'a str, serde_json::Value)),
+    Arr(JsonAst),
+    Obj((&'a str, JsonAst)),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1503,72 +1503,13 @@ pub fn insert_index(
     }
 
     let source_tree = match source_value {
-        InsertionValue::Arr(value) => {
-            let source_token_kind = Token::from_value(&value);
-            let source_token_meta = tok_meta_from_value(&value);
-            let Ok(source_contents) = serde_json::to_string(&value) else {
-                return Err(InsertionError::FailedToSerializeValue);
-            };
-
-            let source_is_container =
-                source_token_kind == Token::Object || source_token_kind == Token::Array;
-
-            let source_tree = if source_is_container {
-                parse(&source_contents).expect("sub_tree valid json")
-            } else {
-                JsonAst {
-                    tok_span: vec![0..source_contents.len()],
-                    tok_next: vec![0],
-                    tok_kind: vec![source_token_kind],
-                    tok_meta: vec![source_token_meta],
-                    tok_term: vec![0],
-                    tok_chld: vec![0],
-                    contents: source_contents.into_bytes(),
-                }
-            };
-            source_tree
-        }
+        InsertionValue::Arr(source_tree) => source_tree,
         InsertionValue::Obj((key, value)) => {
-            let colon_space = ": ";
-            let key = key.to_string();
-            let key_len = key.len() + "\"\"".len();
-            let mut source_contents = String::with_capacity(
-                key_len + colon_space.len() + 64, /* perf: estimate value len better */
-            );
-            let Ok(()) = serde_json::to_writer(
-                // safety: serde_json guarantees it only writes valid utf8 bytes
-                unsafe { source_contents.as_mut_vec() },
-                &serde_json::Value::String(key),
-            ) else {
-                return Err(InsertionError::FailedToSerializeValue);
-            };
-            // must calculate the length of the key after serialization,
-            // as serialization may change the length based on encoding of special characters
-            // but before pushing the colon and space
-            let key_len = source_contents.len();
-            source_contents.push_str(colon_space);
-            let Ok(()) = serde_json::to_writer(
-                // safety: serde_json guarantees it only writes valid utf8 bytes
-                unsafe { source_contents.as_mut_vec() },
-                &value,
-            ) else {
-                return Err(InsertionError::FailedToSerializeValue);
-            };
-            let mut source_tree = JsonAst {
-                tok_next: vec![0],
-                tok_kind: vec![Token::String],
-                tok_meta: vec![0],
-                tok_span: vec![0..key_len],
-                tok_term: vec![0],
-                tok_chld: vec![1],
-                contents: source_contents.into_bytes(),
-            };
-            let mut cursor = key_len + colon_space.len();
-            let Ok(()) = parse_value(&mut source_tree, &mut cursor) else {
-                return Err(InsertionError::FailedToSerializeValue);
-            };
-            source_tree.tok_term[0] = source_tree.tok_term[1];
-            source_tree
+            let mut builder = JsonAstBuilder::new();
+            builder.state.push(builder::State::Object);
+            builder.key(key);
+            builder.tree(&value);
+            builder.build()
         }
     };
 
@@ -1940,7 +1881,6 @@ fn add_signed_range(val: &mut Range<usize>, diff: isize) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use serde_json::json;
     use std::ops::Range;
 
     // todo! parameterize on delimiters
@@ -2110,6 +2050,7 @@ mod test {
 
     mod replace {
         use super::*;
+        use serde_json::json;
 
         #[track_caller]
         fn check(target: &str, source: serde_json::Value, expected: &str) {
@@ -2396,7 +2337,7 @@ mod test {
             arr_nested_obj,
             r#"[[<[]>, 1], 2]"#,
             Prepend,
-            Arr(json!({"foo": "bar"})),
+            Arr(parse(r#"{"foo": "bar"}"#).unwrap()),
             r#"[[[{"foo":"bar"}], 1], 2]"#
         );
 
@@ -2404,7 +2345,7 @@ mod test {
             arr_after_middle,
             r#"[1, <2>, 4]"#,
             After,
-            Arr(json!(3)),
+            Arr(parse("3").unwrap()),
             r#"[1, 2, 3, 4]"#
         );
 
@@ -2412,7 +2353,7 @@ mod test {
             arr_after_single,
             r#"[<1>]"#,
             After,
-            Arr(json!(2)),
+            Arr(parse("2").unwrap()),
             r#"[1, 2]"#
         );
 
@@ -2420,7 +2361,7 @@ mod test {
             arr_after_empty_fail,
             r#"<[]>"#,
             After,
-            Arr(json!(2)),
+            Arr(parse("2").unwrap()),
             InsertionError::TargetIsNotItem
         );
 
@@ -2428,7 +2369,7 @@ mod test {
             arr_after_object,
             r#"[<{"foo":"bar"}>]"#,
             After,
-            Arr(json!({"baz": "qux"})),
+            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
             r#"[{"foo":"bar"}, {"baz":"qux"}]"#
         );
 
@@ -2436,7 +2377,7 @@ mod test {
             arr_append_to_null_fail,
             r#"[<null>]"#,
             Append,
-            Arr(json!(null)),
+            Arr(parse("null").unwrap()),
             InsertionError::TargetIsNotContainer
         );
 
@@ -2444,7 +2385,7 @@ mod test {
             arr_before_object,
             r#"[<{"foo":"bar"}>]"#,
             Before,
-            Arr(json!({"baz": "qux"})),
+            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
             r#"[{"baz":"qux"}, {"foo":"bar"}]"#
         );
 
@@ -2452,7 +2393,7 @@ mod test {
             arr_before_nested_array,
             r#"[<{"foo":"bar"}>, {"baz":"qux"}]"#,
             Before,
-            Arr(json!([1, 2])),
+            Arr(parse("[1, 2]").unwrap()),
             r#"[[1,2], {"foo":"bar"}, {"baz":"qux"}]"#
         );
 
@@ -2460,7 +2401,7 @@ mod test {
             arr_before_end,
             r#"[1, 2, <4>]"#,
             Before,
-            Arr(json!(3)),
+            Arr(parse("3").unwrap()),
             r#"[1, 2, 3, 4]"#
         );
 
@@ -2468,7 +2409,7 @@ mod test {
             arr_before_start,
             r#"[<1>, 2, 3]"#,
             Before,
-            Arr(json!(0)),
+            Arr(parse("0").unwrap()),
             r#"[0, 1, 2, 3]"#
         );
 
@@ -2476,7 +2417,7 @@ mod test {
             arr_before_single,
             r#"[<1>]"#,
             Before,
-            Arr(json!(0)),
+            Arr(parse("0").unwrap()),
             r#"[0, 1]"#
         );
 
@@ -2484,7 +2425,7 @@ mod test {
             arr_before_middle,
             r#"[0, <2>, 3]"#,
             Before,
-            Arr(json!(1)),
+            Arr(parse("1").unwrap()),
             r#"[0, 1, 2, 3]"#
         );
 
@@ -2492,7 +2433,7 @@ mod test {
             arr_prepend,
             r#"<[1, 2, 3]>"#,
             Prepend,
-            Arr(json!(0)),
+            Arr(parse("0").unwrap()),
             r#"[0, 1, 2, 3]"#
         );
 
@@ -2500,7 +2441,7 @@ mod test {
             arr_append,
             r#"<[1, 2, 3]>"#,
             Append,
-            Arr(json!(4)),
+            Arr(parse("4").unwrap()),
             r#"[1, 2, 3, 4]"#
         );
 
@@ -2508,7 +2449,7 @@ mod test {
             arr_prepend_empty,
             r#"<[]>"#,
             Prepend,
-            Arr(json!(0)),
+            Arr(parse("0").unwrap()),
             r#"[0]"#
         );
 
@@ -2516,7 +2457,7 @@ mod test {
             arr_prepend_object_to_empty,
             r#"<[]>"#,
             Prepend,
-            Arr(json!({"foo": "bar"})),
+            Arr(parse(r#"{"foo": "bar"}"#).unwrap()),
             r#"[{"foo":"bar"}]"#
         );
 
@@ -2524,7 +2465,7 @@ mod test {
             arr_prepend_null_to_nested,
             r#"[<[]>,null,null,[null]]"#,
             Prepend,
-            Arr(json!(null)),
+            Arr(parse("null").unwrap()),
             r#"[[null],null,null,[null]]"#
         );
 
@@ -2532,7 +2473,7 @@ mod test {
             obj_array_value_fail,
             r#"{<"foo">: "bar"}"#,
             After,
-            Arr(json!({"baz": "qux"})),
+            Arr(parse(r#"{"baz": "qux"}"#).unwrap()),
             InsertionError::IncorrectContainerType
         );
 
@@ -2540,7 +2481,7 @@ mod test {
             obj_after_single,
             r#"{<"foo">: "bar"}"#,
             After,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"foo": "bar", "baz": "qux"}"#
         );
 
@@ -2548,7 +2489,7 @@ mod test {
             obj_after_first,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             After,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
         );
 
@@ -2556,7 +2497,7 @@ mod test {
             obj_after_first_duplicate,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             After,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
         );
 
@@ -2564,7 +2505,7 @@ mod test {
             obj_after_value_fail,
             r#"{"": <null>}"#,
             After,
-            Arr(json!(null)),
+            Arr(parse("null").unwrap()),
             InsertionError::TargetIsNotItem
         );
 
@@ -2572,7 +2513,7 @@ mod test {
             obj_before_first,
             r#"{<"foo">: "bar", "quz": "qua"}"#,
             Before,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"baz": "qux", "foo": "bar", "quz": "qua"}"#
         );
 
@@ -2580,7 +2521,7 @@ mod test {
             obj_before_second,
             r#"{"foo": "bar", <"quz">: "qua"}"#,
             Before,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"foo": "bar", "baz": "qux", "quz": "qua"}"#
         );
 
@@ -2588,7 +2529,7 @@ mod test {
             obj_append_empty,
             r#"<{}>"#,
             Append,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"baz": "qux"}"#
         );
 
@@ -2596,7 +2537,7 @@ mod test {
             obj_prepend_empty,
             r#"<{}>"#,
             Prepend,
-            Obj(("baz", json!("qux"))),
+            Obj(("baz", parse(r#""qux""#).unwrap())),
             r#"{"baz": "qux"}"#
         );
 
@@ -2604,7 +2545,7 @@ mod test {
             obj_append_special_chars,
             r#"<{}>"#,
             Append,
-            Obj(("y\0c", json!(null))),
+            Obj(("y\0c", parse("null").unwrap())),
             r#"{"y\u0000c": null}"#
         );
 
@@ -2612,7 +2553,7 @@ mod test {
             obj_append_empty_key,
             r#"{"\n":false,"0":<{}>}"#,
             Append,
-            Obj(("", json!({}))),
+            Obj(("", parse("{}").unwrap())),
             r#"{"\n":false,"0":{"": {}}}"#
         );
 
@@ -2621,7 +2562,7 @@ mod test {
             r#"[<// F
 >            true]"#,
             After,
-            Arr(json!(null)),
+            Arr(parse("null").unwrap()),
             InsertionError::TargetIsNotItem
         );
 
@@ -2630,7 +2571,7 @@ mod test {
             r#"{"`":// hhhhhe
         [false],<"">:[[]]}"#,
             After,
-            Obj(("", json!(true))),
+            Obj(("", parse("true").unwrap())),
             r#"{"`":// hhhhhe
         [false],"":[[]], "": true}"#
         );
