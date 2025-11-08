@@ -335,32 +335,6 @@ impl std::error::Error for ParseError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PathEntry {
-    Str(String),
-    Idx(usize),
-}
-
-#[derive(Debug)]
-pub struct Path(pub Vec<PathEntry>);
-
-impl Path {
-    pub fn from_str(s: &str) -> Path {
-        if s.is_empty() {
-            return Self(Vec::new());
-        }
-        let mut path = Vec::new();
-        for item in s.split('.') {
-            if let Ok(idx) = item.parse::<usize>() {
-                path.push(PathEntry::Idx(idx));
-            } else {
-                path.push(PathEntry::Str(item.to_string()));
-            }
-        }
-        return Self(path);
-    }
-}
-
 pub fn parse(input: &str) -> Result<JsonAst, ParseError> {
     let mut tree = JsonAst::empty();
     // todo! don't clone if not necessary
@@ -1231,7 +1205,6 @@ pub enum ReplaceTarget {
 pub enum ReplaceError {
     KeyMustBeString,
     NewValueSerializationFailure,
-    InvalidPath,
 }
 
 pub fn replace_index(
@@ -1358,61 +1331,6 @@ pub fn replace_index(
     }
 
     Ok(())
-}
-
-pub fn replace_path(
-    tree: &mut JsonAst,
-    path: &Path,
-    source_value: JsonAst,
-    target: ReplaceTarget,
-) -> Result<(), ReplaceError> {
-    let Some(target_index) = index_for_path(tree, path, target) else {
-        return Err(ReplaceError::InvalidPath);
-    };
-
-    return replace_index(tree, target_index, source_value);
-}
-
-fn index_for_path(tree: &JsonAst, path: &Path, target: ReplaceTarget) -> Option<usize> {
-    let mut index = 0;
-    let mut value_index = 0;
-
-    let path = &path.0;
-    if path.is_empty() || path.len() == 1 && matches!(&path[0], PathEntry::Str(s) if s.is_empty()) {
-        return Some(0);
-    }
-    'segments: for segment in path {
-        match (segment, tree.tok_kind[index]) {
-            (&PathEntry::Idx(idx), Token::Array) => {
-                value_index = 0;
-                let mut iter = ArrayItemIter::new(&tree, index);
-                for _ in 0..idx {
-                    iter.next()?;
-                }
-                index = iter.next()?;
-            }
-            (PathEntry::Str(key), Token::Object) => {
-                let iter = ObjectItemIter::new(&tree, index);
-                for (key_i, val_i) in iter {
-                    let key_str = tree.value_at(key_i);
-                    if key_str == key {
-                        index = key_i;
-                        value_index = val_i;
-                        continue 'segments;
-                    }
-                }
-                return None;
-            }
-            _ => {
-                return None;
-            }
-        }
-    }
-
-    if target == ReplaceTarget::Value && tree.tok_kind[index] == Token::String && value_index != 0 {
-        index = value_index;
-    }
-    Some(index)
 }
 
 #[derive(Debug, Clone, Copy)]
