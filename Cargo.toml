@@ -3,10 +3,6 @@ name = "jsoup"
 edition = "2024"
 
 
-[[bin]]
-name = "jsoup"
-path = "src/main.rs"
-
 [lib]
 path = "src/lib.rs"
 
