@@ -8,12 +8,22 @@
   - [ ] `reformat` helper that takes formatting style and index and applies formatting
   - [ ] Make update functions use format style to maintain formatting
 - [ ] Add `tok_cmma` to store index of comma after `index`
-    * will avoid issues found in Zed where we have to parse comma location without knowing if it's in comment
+    * Will avoid issues found in Zed where we have to parse comma location without knowing if it's in comment
 - [ ] Add benchmarks
   - before unifying update logic
   - options
     * insert 1000 values into array
     * insert values into very deeply nested value
+    * use `Arbitrary` for random values
+- [ ] Integration test
+  - test that generates a sequence of actions, starting with parse
+  - used to fuzz all steps
+  - steps:
+    * remove
+    * insert
+    * replace
+    * re-parse
+    * re-format
 - [ ] Cursor API for traversal
 - [ ] explore more efficient updating: splitting into gather and apply steps to amoritize actual full updates with expensive splice calls
 - [ ] improve update efficiency
