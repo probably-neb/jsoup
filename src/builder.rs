@@ -204,6 +204,7 @@ impl JsonAstBuilder {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.key(\"{}\");", key);
         }
+        self.write_punctuation();
         let Some(State::Object {
             object_index,
             prev_key_index,
@@ -211,9 +212,6 @@ impl JsonAstBuilder {
         else {
             unreachable!("Trying to add a key without starting an object")
         };
-        if self.next_punctuation == NextPunctuation::Comma {
-            self.json.contents.push(b',');
-        }
         let key_index = self.json.create_string(key);
         if let Some(prev_key_index) = *prev_key_index {
             self.json.tok_next[prev_key_index] = key_index as u32;
@@ -335,7 +333,7 @@ impl JsonAstBuilder {
             }
         }
         if let Some(first_non_comment_token) = first_non_comment_token {
-            self.value_end(first_non_comment_token);
+            self.value_end(offset_token + first_non_comment_token);
         }
     }
 }
