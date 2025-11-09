@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, io::Write as _};
+use std::io::Write as _;
 
 use crate::*;
 
@@ -161,7 +161,7 @@ impl JsonAstBuilder {
         }
         let Some(State::Object {
             object_index,
-            prev_key_index,
+            prev_key_index: _,
         }) = self.state.pop()
         else {
             unreachable!("Trying to end an object without starting it");
@@ -191,7 +191,7 @@ impl JsonAstBuilder {
         }
         let Some(State::Array {
             array_index,
-            prev_item_index,
+            prev_item_index: _,
         }) = self.state.pop()
         else {
             unreachable!("Trying to end an array without starting it");
@@ -486,6 +486,7 @@ mod tests {
         };
     }
 
+    #[allow(unused)]
     macro_rules! check_fail {
         ($name:ident, $input:expr, $expected:expr) => {
             #[test]
