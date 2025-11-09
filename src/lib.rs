@@ -1227,7 +1227,7 @@ pub fn insert_index(
     let target_container_index = if is_method_relative_to_item {
         // if target is container, and method is relative to item,
         // or vice versa, the api has been broken
-        item_container_index(tree, target_index).ok_or(InsertionError::TargetIsNotItem)? // todo! better error
+        tok_container(tree, target_index).ok_or(InsertionError::TargetIsNotItem)? // todo! better error
     } else {
         if !is_target_container {
             return Err(InsertionError::TargetIsNotContainer);
@@ -1416,7 +1416,7 @@ pub fn insert_index(
         if !is_object_key(tree, outer_container_index) {
             tree.tok_span[outer_container_index].end += diff_content;
         }
-        container_index = item_parent_index(tree, outer_container_index);
+        container_index = tok_parent(tree, outer_container_index);
     }
 
     for tok_term in &mut tree.tok_term[source_insertion_range.clone()] {
@@ -1531,7 +1531,7 @@ pub fn remove_index(tree: &mut JsonAst, index: usize) -> Result<(), RemoveError>
         if !is_object_key(tree, parent_index) {
             tree.tok_span[parent_index].end -= diff_contents;
         }
-        ancestor_index = item_parent_index(tree, parent_index);
+        ancestor_index = tok_parent(tree, parent_index);
     }
 
     for tok_term in &mut tree.tok_term[token_removal_range.start..] {
@@ -1575,12 +1575,12 @@ fn first_non_comment_token(tree: &JsonAst) -> Option<usize> {
     None
 }
 
-fn item_container_index(tree: &JsonAst, item_index: usize) -> Option<usize> {
-    return item_parent_index(tree, item_index)
-        .filter(|&parent_index| !is_object_key(tree, parent_index));
+fn tok_container(tree: &Tree, item_index: usize) -> Option<usize> {
+    // todo: if parent returns key, should return object containing key?
+    return tok_parent(tree, item_index).filter(|&parent_index| !is_object_key(tree, parent_index));
 }
 
-fn item_parent_index(tree: &JsonAst, mut item_index: usize) -> Option<usize> {
+fn tok_parent(tree: &Tree, mut item_index: usize) -> Option<usize> {
     let mut cur_index = item_index;
     while cur_index > 0 {
         if tree.tok_next[cur_index] as usize == item_index {
@@ -1671,7 +1671,7 @@ mod test {
                 .iter()
                 .position(|range| range == &item_range)
                 .expect("index found");
-            let index = item_container_index(&tree, item_index).expect("container index found");
+            let index = tok_container(&tree, item_index).expect("container index found");
             assert_eq!(container_index, index);
         }
 
