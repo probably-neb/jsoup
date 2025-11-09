@@ -9,10 +9,10 @@ use libfuzzer_sys::{
 
 #[derive(Debug)]
 struct InsertDef {
-    contents: jsoup::JsonAst,
+    contents: jsoup::Tree,
     index: usize,
     key: Option<String>,
-    value: jsoup::JsonAst,
+    value: jsoup::Tree,
     method: InsertionMethod,
 }
 

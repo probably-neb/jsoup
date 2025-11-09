@@ -8,9 +8,9 @@ use libfuzzer_sys::{
 
 #[derive(Debug)]
 struct ReplaceDef {
-    contents: jsoup::JsonAst,
+    contents: jsoup::Tree,
     index: usize,
-    value: jsoup::JsonAst,
+    value: jsoup::Tree,
 }
 
 impl<'a> Arbitrary<'a> for ReplaceDef {

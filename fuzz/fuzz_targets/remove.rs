@@ -1,8 +1,6 @@
 #![no_main]
 
-use common::{
-    AnnotatedJSON, annotated_json, random_json_ast, random_value_index,
-};
+use common::{AnnotatedJSON, annotated_json, random_json_ast, random_value_index};
 use libfuzzer_sys::{
     arbitrary::{self, Arbitrary, Unstructured},
     fuzz_target,
@@ -10,7 +8,7 @@ use libfuzzer_sys::{
 
 #[derive(Debug)]
 struct RemoveDef {
-    contents: jsoup::JsonAst,
+    contents: jsoup::Tree,
     index: usize,
     _annotated: AnnotatedJSON,
 }

@@ -1,10 +1,7 @@
 use jsoup::*;
 use libfuzzer_sys::arbitrary::{self, Unstructured};
 
-pub fn random_value_index(
-    tree: &JsonAst,
-    rng: &mut Unstructured,
-) -> Result<usize, arbitrary::Error> {
+pub fn random_value_index(tree: &Tree, rng: &mut Unstructured) -> Result<usize, arbitrary::Error> {
     rng.choose_index(tree.tok_kind.len())
 }
 
@@ -77,7 +74,7 @@ pub fn random_serde_json_value_depth(
     }
 }
 
-pub fn random_json_ast(rng: &mut Unstructured) -> Result<JsonAst, arbitrary::Error> {
+pub fn random_json_ast(rng: &mut Unstructured) -> Result<Tree, arbitrary::Error> {
     let mut builder = JsonAstBuilder::new();
     random_json_ast_depth(rng, &mut builder, 0)?;
     Ok(builder.build())
@@ -195,7 +192,7 @@ impl std::fmt::Debug for AnnotatedJSON {
     }
 }
 
-pub fn annotated_json(tree: &JsonAst, index: usize) -> AnnotatedJSON {
+pub fn annotated_json(tree: &Tree, index: usize) -> AnnotatedJSON {
     let span = tree.tok_span[index].clone();
     let mut contents = std::str::from_utf8(&tree.contents)
         .expect("contents valid")

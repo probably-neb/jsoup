@@ -61,7 +61,7 @@ pub enum NextPunctuation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonAstBuilder {
-    pub json: JsonAst,
+    pub json: Tree,
     pub state: Vec<State>,
     pub next_punctuation: NextPunctuation,
 }
@@ -69,13 +69,13 @@ pub struct JsonAstBuilder {
 impl JsonAstBuilder {
     pub fn new() -> JsonAstBuilder {
         JsonAstBuilder {
-            json: JsonAst::empty(),
+            json: Tree::empty(),
             state: vec![State::start()],
             next_punctuation: NextPunctuation::Beginning,
         }
     }
 
-    pub fn build(self) -> JsonAst {
+    pub fn build(self) -> Tree {
         if option_env!("BUILDER_DBG").is_some() {
             let json: &str =
                 std::str::from_utf8(&self.json.contents).expect("contents are valid UTF-8");
@@ -297,7 +297,7 @@ impl JsonAstBuilder {
         self.update_parent_tok_term();
     }
 
-    pub fn tree(&mut self, tree: &JsonAst) {
+    pub fn tree(&mut self, tree: &Tree) {
         let contents_str =
             std::str::from_utf8(&tree.contents).expect("tree contents are valid utf8");
         if option_env!("BUILDER_DBG").is_some() {
@@ -342,7 +342,7 @@ impl JsonAstBuilder {
     }
 }
 
-impl JsonAst {
+impl Tree {
     pub fn create_object(&mut self) -> usize {
         let start = self.contents.len();
         self.contents.extend_from_slice(b"{");
@@ -469,9 +469,9 @@ fn write_str_escaped(w: &mut Vec<u8>, s: &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{JsonAst, assert_tree_valid, builder::JsonAstBuilder, parse};
+    use crate::{Tree, assert_tree_valid, builder::JsonAstBuilder, parse};
 
-    fn check(input: &JsonAst, expected: impl Into<String>) {
+    fn check(input: &Tree, expected: impl Into<String>) {
         let expected = parse(&expected.into()).expect("expected valid JSON");
         pretty_assertions::assert_eq!(input, &expected);
         assert_tree_valid(input);
