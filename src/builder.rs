@@ -255,7 +255,7 @@ impl JsonAstBuilder {
     // todo: precision/rounding
     pub fn float(&mut self, arg: f64) {
         if option_env!("BUILDER_DBG").is_some() {
-            println!("builder.float({});", arg);
+            println!("builder.float({:?});", arg);
         }
         assert!(arg.is_finite(), "Float is not finite");
         self.value_start();
@@ -390,7 +390,7 @@ impl JsonAst {
 
     pub fn create_float(&mut self, value: f64) -> usize {
         let start = self.contents.len();
-        write!(&mut self.contents, "{}", value).expect("format of float failed");
+        write!(&mut self.contents, "{:?}", value).expect("format of float failed");
         self.push_float(start..self.contents.len())
     }
 
