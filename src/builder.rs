@@ -126,7 +126,6 @@ impl JsonAstBuilder {
             unreachable!("Unexpected end of state stack");
         };
 
-        // If we're at the root level (Start container), don't update parent metadata
         if last_state.container_kind == Container::Start {
             return;
         }
@@ -158,7 +157,6 @@ impl JsonAstBuilder {
             self.json.tok_chld[container] = value_index as u32;
             *prev_item = Some(value_index);
         }
-        self.json.tok_meta[container] += 1;
 
         if last_state.container_kind != Container::ObjectValue {
             self.state.push(last_state);
@@ -317,7 +315,6 @@ impl JsonAstBuilder {
 
         self.json.tok_span.extend_from_slice(&tree.tok_span);
         self.json.tok_kind.extend_from_slice(&tree.tok_kind);
-        self.json.tok_meta.extend_from_slice(&tree.tok_meta);
         self.json.tok_next.extend_from_slice(&tree.tok_next);
         self.json.tok_term.extend_from_slice(&tree.tok_term);
         self.json.tok_chld.extend_from_slice(&tree.tok_chld);
@@ -388,13 +385,13 @@ impl JsonAst {
     pub fn create_int(&mut self, value: i64) -> usize {
         let start = self.contents.len();
         write!(&mut self.contents, "{}", value).expect("format of int failed");
-        self.push_int(start..self.contents.len(), value < 0)
+        self.push_int(start..self.contents.len())
     }
 
     pub fn create_float(&mut self, value: f64) -> usize {
         let start = self.contents.len();
         write!(&mut self.contents, "{}", value).expect("format of float failed");
-        self.push_float(start..self.contents.len(), value < 0.0)
+        self.push_float(start..self.contents.len())
     }
 
     pub fn create_string(&mut self, value: &str) -> usize {
@@ -424,7 +421,7 @@ impl JsonAst {
         } else {
             self.contents.extend_from_slice(b"//\n");
         }
-        self.push_comment(start..self.contents.len(), false)
+        self.push_comment(start..self.contents.len())
     }
 
     pub fn create_block_comment(&mut self, comment: &str) -> usize {
@@ -432,7 +429,7 @@ impl JsonAst {
         self.contents.extend_from_slice(b"/* ");
         self.contents.extend_from_slice(comment.as_bytes());
         self.contents.extend_from_slice(b" */");
-        self.push_comment(start..self.contents.len(), true)
+        self.push_comment(start..self.contents.len())
     }
 }
 

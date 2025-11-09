@@ -5,11 +5,6 @@ pub use builder::*;
 pub use serde_json;
 use std::{fmt::Display, hash::Hasher, ops::Range};
 
-const META_NUM_NEGATIVE: u32 = 1 << 0;
-const META_NUM_FLOAT: u32 = 1 << 1;
-const META_COMMENT_LINE: u32 = 1 << 2;
-const META_COMMENT_BLOCK: u32 = 1 << 3;
-
 const EMPTY_RANGE: Range<usize> = 0..0;
 
 #[derive(PartialEq, Eq, Clone, Hash)]
@@ -20,9 +15,6 @@ pub struct JsonAst {
     /// short for tok_termination:
     /// the index of the last item in the subtree starting at this node
     pub tok_term: Vec<u32>,
-    /// token metadata:
-    /// additional information about the token
-    pub tok_meta: Vec<u32>,
     /// token next:
     /// the index of the next token in the sequence
     /// For keys this is the next key in the object,
@@ -55,7 +47,6 @@ impl std::fmt::Debug for JsonAst {
                     .collect::<Vec<_>>(),
             )
             .field("tok_kind", &self.tok_kind)
-            .field("tok_meta", &self.tok_meta)
             .field("tok_next", &self.tok_next)
             .field("tok_term", &self.tok_term)
             .field("tok_chld", &self.tok_chld)
@@ -69,7 +60,6 @@ impl JsonAst {
             contents: Vec::new(),
             tok_span: Vec::new(),
             tok_kind: Vec::new(),
-            tok_meta: Vec::new(),
             tok_next: Vec::new(),
             tok_term: Vec::new(),
             tok_chld: Vec::new(),
@@ -102,7 +92,6 @@ impl JsonAst {
 
     fn assert_lengths(&self) {
         assert_eq!(self.tok_span.len(), self.tok_kind.len());
-        assert_eq!(self.tok_span.len(), self.tok_meta.len());
         assert_eq!(self.tok_span.len(), self.tok_next.len());
         assert_eq!(self.tok_span.len(), self.tok_chld.len());
         assert_eq!(self.tok_span.len(), self.tok_term.len());
@@ -120,7 +109,6 @@ impl JsonAst {
         self.tok_term.push(index as u32);
         self.tok_span.push(EMPTY_RANGE);
         self.tok_kind.push(tok);
-        self.tok_meta.push(0);
         self.tok_next.push(0);
         self.tok_chld.push(0);
         self.assert_lengths();
@@ -146,40 +134,10 @@ impl JsonAst {
         index
     }
 
-    pub fn push_comment(&mut self, span: Range<usize>, is_block: bool) -> usize {
-        if is_block {
-            assert!(
-                span.len() >= 4,
-                "Block comment must be at least 4 bytes for /**/"
-            );
-            assert_eq!(
-                &self.contents[span.start..span.start + 2],
-                b"/*",
-                "Block comment must start with /*"
-            );
-            assert_eq!(
-                &self.contents[span.end - 2..span.end],
-                b"*/",
-                "Block comment must end with */"
-            );
-        } else {
-            assert!(
-                span.len() >= 2,
-                "Line comment must be at least 2 bytes for //"
-            );
-            assert_eq!(
-                &self.contents[span.start..span.start + 2],
-                b"//",
-                "Line comment must start with //"
-            );
-        }
+    pub fn push_comment(&mut self, span: Range<usize>) -> usize {
         let index = self.reserve(Token::Comment);
         self.tok_span[index] = span;
-        self.tok_meta[index] = if is_block {
-            META_COMMENT_BLOCK
-        } else {
-            META_COMMENT_LINE
-        };
+        assert_comment_valid(self, index);
         index
     }
 
@@ -210,41 +168,21 @@ impl JsonAst {
         index
     }
 
-    pub fn push_int(&mut self, span: Range<usize>, is_negative: bool) -> usize {
+    pub fn push_int(&mut self, span: Range<usize>) -> usize {
         assert!(!span.is_empty(), "Integer span cannot be empty");
-        let has_minus = self.contents[span.start] == b'-';
-        assert_eq!(
-            is_negative, has_minus,
-            "is_negative argument must match whether content starts with '-'"
-        );
         let index = self.reserve(Token::Number);
         self.tok_span[index] = span;
-        let mut meta = 0;
-        if is_negative {
-            meta |= META_NUM_NEGATIVE;
-        }
-        self.tok_meta[index] = meta;
         index
     }
 
-    pub fn push_float(&mut self, span: Range<usize>, is_negative: bool) -> usize {
+    pub fn push_float(&mut self, span: Range<usize>) -> usize {
         assert!(!span.is_empty(), "Float span cannot be empty");
-        let has_minus = self.contents[span.start] == b'-';
-        assert_eq!(
-            is_negative, has_minus,
-            "is_negative argument must match whether content starts with '-'"
-        );
         let content = &self.contents[span.clone()];
         let has_float_indicator =
             content.contains(&b'.') || content.contains(&b'e') || content.contains(&b'E');
         assert!(has_float_indicator, "Float must contain '.', 'e', or 'E'");
         let index = self.reserve(Token::Number);
         self.tok_span[index] = span;
-        let mut meta = META_NUM_FLOAT;
-        if is_negative {
-            meta |= META_NUM_NEGATIVE;
-        }
-        self.tok_meta[index] = meta;
         index
     }
 
@@ -412,7 +350,7 @@ fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Pars
                 while *cursor <= tree.contents.len() {
                     if *cursor == tree.contents.len() || tree.contents[*cursor] == b'\n' {
                         let range = start..usize::min(*cursor + 1, tree.contents.len());
-                        tree.push_comment(range, false);
+                        tree.push_comment(range);
                         break;
                     }
 
@@ -432,7 +370,7 @@ fn parse_any_comments(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), Pars
                         if tree.contents[*cursor + 1] == b'/' {
                             assert_eq!(&tree.contents[*cursor..*cursor + 2], [b'*', b'/']);
                             *cursor += 2;
-                            tree.push_comment(start..*cursor, true);
+                            tree.push_comment(start..*cursor);
                             found = true;
                             break;
                         }
@@ -585,9 +523,9 @@ fn parse_number(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     }
 
     if is_float {
-        tree.push_float(start..*cursor, is_negative);
+        tree.push_float(start..*cursor);
     } else {
-        tree.push_int(start..*cursor, is_negative);
+        tree.push_int(start..*cursor);
     }
     Ok(())
 }
@@ -623,7 +561,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     *cursor += 1;
 
     let mut key_index_prev = obj_index;
-    let mut key_count = 0;
 
     loop {
         let eof = parse_whitespace_or_comment(tree, cursor)?;
@@ -638,7 +575,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
         let key_index = parse_key_value(tree, cursor)?;
         tree.tok_next[key_index_prev] = key_index as u32;
         key_index_prev = key_index;
-        key_count += 1;
         if tree.tok_chld[obj_index] == 0 {
             tree.tok_chld[obj_index] = key_index as u32;
         }
@@ -657,8 +593,6 @@ fn parse_object(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError
     tree.tok_term[obj_index] = tree.next_index() as u32 - 1;
     // clear because we set without checking in loop
     tree.tok_next[obj_index] = 0;
-
-    tree.tok_meta[obj_index] = key_count;
 
     tree.tok_span[obj_index].end = *cursor;
     return Ok(());
@@ -704,7 +638,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     *cursor += 1;
 
     let mut value_index_prev = array_index;
-    let mut value_count = 0;
 
     loop {
         let eof = parse_whitespace_or_comment(tree, cursor)?;
@@ -719,7 +652,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
         parse_value(tree, cursor)?;
         tree.tok_next[value_index_prev] = value_index as u32;
         value_index_prev = value_index;
-        value_count += 1;
         if tree.tok_chld[array_index] == 0 {
             tree.tok_chld[array_index] = value_index as u32;
         }
@@ -738,7 +670,6 @@ fn parse_array(tree: &mut JsonAst, cursor: &mut usize) -> Result<(), ParseError>
     // clear because we set without checking in loop
     tree.tok_next[array_index] = 0;
 
-    tree.tok_meta[array_index] = value_count;
     tree.tok_span[array_index].end = *cursor;
     return Ok(());
 }
@@ -749,14 +680,6 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         is_start_of_number(tree.contents[range.start]),
         "number must start with a digit or '-', found '{}'",
         tree.contents[range.start] as char
-    );
-
-    let is_negative_sign = tree.contents[range.start] == b'-';
-    let is_negative_extra = tree.tok_meta[i] & META_NUM_NEGATIVE != 0;
-    assert_eq!(
-        is_negative_sign, is_negative_extra,
-        "Expected negative sign on negative number, found is_negative={} and first_char={}",
-        is_negative_extra, tree.contents[range.start] as char
     );
 
     let value = &tree.contents[range.clone()];
@@ -787,17 +710,6 @@ fn assert_number_valid(tree: &JsonAst, i: usize) {
         count(value, b'+') == 0,
         "number should not contain '+' sign, found {}",
         count(value, b'+')
-    );
-
-    let is_float_scientific = (count(value, b'e') + count(value, b'E')) == 1;
-    let is_float_frac = count(value, b'.') != 0;
-    let is_float = is_float_scientific || is_float_frac;
-    let is_float_extra = tree.tok_meta[i] & META_NUM_FLOAT != 0;
-    assert!(
-        is_float_extra == is_float,
-        "float metadata flag {} should match actual float status {}",
-        is_float_extra,
-        is_float
     );
 }
 
@@ -848,18 +760,12 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
         "object content must be valid UTF-8"
     );
 
-    let expected_count = tree.tok_meta[i];
-    let mut found_count = 0;
     let mut key_index = container_first_item_index(tree, i);
     while key_index != 0 {
         assert_eq!(
             Token::String,
             tree.tok_kind[key_index],
             "key of object should be string",
-        );
-        assert_eq!(
-            0, tree.tok_meta[key_index],
-            "object key should have metadata value of 0"
         );
         assert!(
             tree.tok_chld[key_index] > 0,
@@ -881,12 +787,7 @@ fn assert_object_valid(tree: &JsonAst, i: usize) {
             );
         }
         key_index = tree.tok_next[key_index] as usize;
-        found_count += 1;
     }
-    assert_eq!(
-        expected_count, found_count,
-        "object has correct number of keys"
-    );
 }
 
 fn assert_array_valid(tree: &JsonAst, i: usize) {
@@ -912,8 +813,6 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
         "array content must be valid UTF-8"
     );
 
-    let expected_count = tree.tok_meta[i];
-    let mut found_count = 0;
     let mut value_index = container_first_item_index(tree, i);
     while value_index != 0 {
         let next_value_index = tree.tok_next[value_index] as usize;
@@ -940,14 +839,7 @@ fn assert_array_valid(tree: &JsonAst, i: usize) {
             );
         }
         value_index = next_value_index;
-        found_count += 1;
     }
-    assert_eq!(
-        expected_count,
-        found_count,
-        "array `{}` has correct number of values",
-        tree.value_at(i)
-    );
 }
 
 fn assert_bool_valid(tree: &JsonAst, i: usize) {
@@ -968,21 +860,19 @@ fn assert_null_valid(tree: &JsonAst, i: usize) {
 }
 
 fn assert_comment_valid(tree: &JsonAst, i: usize) {
-    if tree.tok_meta[i] & META_COMMENT_LINE != 0 {
-        assert!(
-            tree.value_at(i).starts_with("//"),
-            "line comment value must start with '//', found '{}'",
-            tree.value_at(i)
-        );
-    } else if tree.tok_meta[i] & META_COMMENT_BLOCK != 0 {
-        assert!(
-            tree.value_at(i).starts_with("/*") && tree.value_at(i).ends_with("*/"),
-            "block comment value must start with '/*' and end with '*/', found '{}'",
-            tree.value_at(i)
-        );
-    } else {
-        unreachable!("unexpected token type for comment");
-    }
+    assert!(
+        tree.tok_span[i].len() >= 2,
+        "comment token must have at least two characters, found '{}'",
+        tree.value_at(i)
+    );
+
+    let start = &tree.contents[tree.tok_span[i].start..][0..2];
+
+    assert!(
+        start == b"//" || start == b"/*",
+        "comment token must start with either '//' or '/*', found '{}'",
+        tree.value_at(i)
+    );
 }
 
 pub fn assert_tree_valid(tree: &JsonAst) {
@@ -1156,29 +1046,6 @@ pub fn is_object_key(tree: &JsonAst, target_index: usize) -> bool {
         && tree.tok_chld[target_index] > 0
 }
 
-pub fn tok_meta_from_value(value: &serde_json::Value) -> u32 {
-    match value {
-        serde_json::Value::Null => 0,
-        serde_json::Value::Bool(_) => 0,
-        serde_json::Value::Number(n) => {
-            let mut meta = 0;
-            if n.is_f64() {
-                meta |= META_NUM_FLOAT;
-                if n.as_f64().unwrap().is_sign_negative() {
-                    meta |= META_NUM_NEGATIVE;
-                }
-            } else if n.is_i64() && !n.is_u64() {
-                meta |= META_NUM_NEGATIVE;
-                meta &= !META_NUM_FLOAT;
-            }
-            meta
-        }
-        serde_json::Value::String(_) => 0,
-        serde_json::Value::Array(arr) => arr.len() as u32,
-        serde_json::Value::Object(obj) => obj.len() as u32,
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ReplaceTarget {
     Key,
@@ -1246,8 +1113,6 @@ pub fn replace_index(
         .splice(target_replacement_range.clone(), source_tree.tok_kind);
     tree.tok_span
         .splice(target_replacement_range.clone(), source_tree.tok_span);
-    tree.tok_meta
-        .splice(target_replacement_range.clone(), source_tree.tok_meta);
     tree.tok_next
         .splice(target_replacement_range.clone(), source_tree.tok_next);
     tree.tok_term
@@ -1391,7 +1256,6 @@ pub fn insert_index(
             builder.state.push(builder::State::object(0));
             builder.key(key);
             builder.tree(&value);
-            builder.json.tok_meta[0] = 0;
 
             builder.json
         }
@@ -1488,10 +1352,6 @@ pub fn insert_index(
         target_tok_insertion_index..target_tok_insertion_index,
         source_tree.tok_kind,
     );
-    tree.tok_meta.splice(
-        target_tok_insertion_index..target_tok_insertion_index,
-        source_tree.tok_meta,
-    );
     tree.tok_next.splice(
         target_tok_insertion_index..target_tok_insertion_index,
         source_tree.tok_next,
@@ -1512,10 +1372,6 @@ pub fn insert_index(
         target_content_insertion_index..target_content_insertion_index,
         content_slices.into_iter().flatten().copied(),
     );
-
-    // meta on containers is the length, this will always have increased by one
-    // after the insertion
-    tree.tok_meta[target_container_index] += 1;
 
     // up to the start of the container we are inserting into, if a tok_next
     // is >= the start of the insertion range, we are in a container of depth > 1
@@ -1652,20 +1508,19 @@ pub fn remove_index(tree: &mut JsonAst, index: usize) -> Result<(), RemoveError>
         tree.tok_next[tok_prev] = tree.tok_next[index];
     }
 
+    if let Some(parent_index) = parent_index.filter(|&i| !is_object_key(tree, i))
+        && tree.tok_chld[parent_index] as usize == index
+        && tree.tok_next[index] == 0
+    {
+        tree.tok_chld[parent_index] = 0;
+    }
+
     tree.tok_kind.drain(token_removal_range.clone());
     tree.tok_span.drain(token_removal_range.clone());
     tree.tok_next.drain(token_removal_range.clone());
-    tree.tok_meta.drain(token_removal_range.clone());
     tree.tok_term.drain(token_removal_range.clone());
     tree.tok_chld.drain(token_removal_range.clone());
     tree.contents.drain(contents_removal_range.clone());
-
-    if let Some(parent_index) = parent_index.filter(|&i| !is_object_key(tree, i)) {
-        tree.tok_meta[parent_index] -= 1;
-        if tree.tok_meta[parent_index] == 0 {
-            tree.tok_chld[parent_index] = 0;
-        }
-    }
 
     let diff_token = token_removal_range.len();
     let diff_contents = contents_removal_range.len();
