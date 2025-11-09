@@ -3,20 +3,52 @@ use std::io::Write as _;
 use crate::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum State {
+pub enum Container {
     Start,
-    ObjectValue {
-        object_index: usize,
-        key_index: usize,
-    },
-    Object {
-        object_index: usize,
-        prev_key_index: Option<usize>,
-    },
-    Array {
-        array_index: usize,
-        prev_item_index: Option<usize>,
-    },
+    ObjectValue,
+    Object,
+    Array,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub struct State {
+    pub container_kind: Container,
+    pub container_index: usize,
+    pub prev_item_index: Option<usize>,
+}
+
+impl State {
+    pub fn start() -> State {
+        State {
+            container_kind: Container::Start,
+            container_index: 0,
+            prev_item_index: None,
+        }
+    }
+
+    pub fn object_value(key_index: usize) -> State {
+        State {
+            container_kind: Container::ObjectValue,
+            container_index: key_index,
+            prev_item_index: None,
+        }
+    }
+
+    pub fn object(object_index: usize) -> State {
+        State {
+            container_kind: Container::Object,
+            container_index: object_index,
+            prev_item_index: None,
+        }
+    }
+
+    pub fn array(array_index: usize) -> State {
+        State {
+            container_kind: Container::Array,
+            container_index: array_index,
+            prev_item_index: None,
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -38,7 +70,7 @@ impl JsonAstBuilder {
     pub fn new() -> JsonAstBuilder {
         JsonAstBuilder {
             json: JsonAst::empty(),
-            state: vec![State::Start],
+            state: vec![State::start()],
             next_punctuation: NextPunctuation::Beginning,
         }
     }
@@ -54,8 +86,8 @@ impl JsonAstBuilder {
 
     fn assert_value(&self) {
         assert!(matches!(
-            self.state.last(),
-            Some(State::Start | State::ObjectValue { .. } | State::Array { .. })
+            self.state.last().as_ref().unwrap().container_kind,
+            Container::Start | Container::ObjectValue | Container::Array
         ));
     }
 
@@ -82,63 +114,54 @@ impl JsonAstBuilder {
 
         // Update all parent containers' tok_term
         for state in &self.state {
-            match state {
-                State::ObjectValue {
-                    object_index,
-                    key_index,
-                } => {
-                    self.json.tok_term[*key_index] = tok_term;
-                    self.json.tok_term[*object_index] = tok_term;
-                }
-                State::Object { object_index, .. } => {
-                    self.json.tok_term[*object_index] = tok_term;
-                }
-                State::Array { array_index, .. } => {
-                    self.json.tok_term[*array_index] = tok_term;
-                }
-                State::Start => {}
-            }
+            self.json.tok_term[state.container_index] = tok_term;
         }
     }
 
     fn value_end(&mut self, index: usize) {
         self.next_punctuation = NextPunctuation::Comma;
 
-        let tok_term = self.json.next_index() as u32 - 1;
+        self.update_parent_tok_term();
+        let Some(mut last_state) = self.state.pop() else {
+            unreachable!("Unexpected end of state stack");
+        };
 
-        let last_state = self.state.pop();
-        if let Some(State::ObjectValue {
-            object_index,
-            key_index,
-        }) = last_state
-            && self.json.tok_kind[object_index] == Token::Object
-        {
-            self.json.tok_chld[key_index] = index as u32;
-            self.json.tok_term[key_index] = tok_term;
-            assert_eq!(
-                self.json.tok_kind[key_index],
-                Token::String,
-                "expected parent container to be an object key"
-            );
-            self.json.tok_meta[object_index] += 1;
-            self.json.tok_term[object_index] = tok_term;
-        } else if let Some(mut state) = last_state {
-            if let State::Array {
-                array_index,
-                prev_item_index: prev_item,
-            } = &mut state
-            {
-                if let Some(prev_item) = prev_item.as_mut() {
-                    self.json.tok_next[*prev_item] = index as u32;
-                    *prev_item = index;
-                } else {
-                    *prev_item = Some(index);
-                    self.json.tok_chld[*array_index] = index as u32;
-                }
-                self.json.tok_term[*array_index] = tok_term;
-                self.json.tok_meta[*array_index] += 1;
-            }
-            self.state.push(state);
+        // If we're at the root level (Start container), don't update parent metadata
+        if last_state.container_kind == Container::Start {
+            return;
+        }
+
+        let container;
+        let prev_item;
+        let value_index;
+
+        if last_state.container_kind == Container::ObjectValue {
+            let Some(object_state) = self.state.last_mut() else {
+                unreachable!("Unexpected end of state stack");
+            };
+            assert_eq!(object_state.container_kind, Container::Object);
+            self.json.tok_chld[last_state.container_index] = index as u32;
+            container = object_state.container_index;
+            prev_item = &mut object_state.prev_item_index;
+            value_index = last_state.container_index;
+        } else {
+            container = last_state.container_index;
+            prev_item = &mut last_state.prev_item_index;
+            value_index = index;
+        }
+        if let Some(prev_item) = prev_item.as_mut() {
+            self.json.tok_next[*prev_item] = value_index as u32;
+            *prev_item = value_index;
+        } else if
+        // HACK: don't overwrite tok_chld when doing key-value pair in `insert_index`
+        self.json.tok_kind[container] != Token::String {
+            self.json.tok_chld[container] = value_index as u32;
+            *prev_item = Some(value_index);
+        }
+        self.json.tok_meta[container] += 1;
+
+        if last_state.container_kind != Container::ObjectValue {
+            self.state.push(last_state);
         }
     }
 
@@ -149,19 +172,17 @@ impl JsonAstBuilder {
         self.value_start();
         self.next_punctuation = NextPunctuation::None;
         let object_index = self.json.create_object();
-        self.state.push(State::Object {
-            object_index,
-            prev_key_index: None,
-        });
+        self.state.push(State::object(object_index));
     }
 
     pub fn end_object(&mut self) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.end_object();");
         }
-        let Some(State::Object {
-            object_index,
-            prev_key_index: _,
+        let Some(State {
+            container_kind: Container::Object,
+            container_index: object_index,
+            ..
         }) = self.state.pop()
         else {
             unreachable!("Trying to end an object without starting it");
@@ -179,19 +200,17 @@ impl JsonAstBuilder {
         self.value_start();
         self.next_punctuation = NextPunctuation::None;
         let array_index = self.json.create_array();
-        self.state.push(State::Array {
-            array_index,
-            prev_item_index: None,
-        });
+        self.state.push(State::array(array_index));
     }
 
     pub fn end_array(&mut self) {
         if option_env!("BUILDER_DBG").is_some() {
             println!("builder.end_array();");
         }
-        let Some(State::Array {
-            array_index,
-            prev_item_index: _,
+        let Some(State {
+            container_kind: Container::Array,
+            container_index: array_index,
+            ..
         }) = self.state.pop()
         else {
             unreachable!("Trying to end an array without starting it");
@@ -205,26 +224,14 @@ impl JsonAstBuilder {
             println!("builder.key(\"{}\");", key);
         }
         self.write_punctuation();
-        let Some(State::Object {
-            object_index,
-            prev_key_index,
-        }) = self.state.last_mut()
-        else {
-            unreachable!("Trying to add a key without starting an object")
-        };
+        assert_eq!(
+            self.state.last().unwrap().container_kind,
+            Container::Object,
+            "Expected an object container"
+        );
         let key_index = self.json.create_string(key);
-        if let Some(prev_key_index) = *prev_key_index {
-            self.json.tok_next[prev_key_index] = key_index as u32;
-        } else {
-            self.json.tok_chld[*object_index] = key_index as u32;
-        }
-        *prev_key_index = Some(key_index);
-        let object_index = *object_index;
 
-        self.state.push(State::ObjectValue {
-            object_index,
-            key_index,
-        });
+        self.state.push(State::object_value(key_index));
         self.next_punctuation = NextPunctuation::Colon;
     }
 

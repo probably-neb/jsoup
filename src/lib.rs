@@ -1388,40 +1388,10 @@ pub fn insert_index(
         InsertionValue::Obj((key, value)) => {
             let mut builder = JsonAstBuilder::new();
 
-            let key_index = builder.json.create_string(key);
-            builder.json.contents.push(b':');
-
-            let offset_content = builder.json.contents.len();
-            let offset_token = builder.json.next_index();
-
-            builder.json.contents.extend_from_slice(&value.contents);
-            builder.json.tok_span.extend_from_slice(&value.tok_span);
-            builder.json.tok_kind.extend_from_slice(&value.tok_kind);
-            builder.json.tok_meta.extend_from_slice(&value.tok_meta);
-            builder.json.tok_next.extend_from_slice(&value.tok_next);
-            builder.json.tok_term.extend_from_slice(&value.tok_term);
-            builder.json.tok_chld.extend_from_slice(&value.tok_chld);
-
-            for tok_next in &mut builder.json.tok_next[offset_token..] {
-                if *tok_next != 0 {
-                    *tok_next += offset_token as u32;
-                }
-            }
-            for tok_span in &mut builder.json.tok_span[offset_token..] {
-                tok_span.start += offset_content;
-                tok_span.end += offset_content;
-            }
-            for tok_term in &mut builder.json.tok_term[offset_token..] {
-                *tok_term += offset_token as u32;
-            }
-            for tok_chld in &mut builder.json.tok_chld[offset_token..] {
-                if *tok_chld != 0 {
-                    *tok_chld += offset_token as u32;
-                }
-            }
-
-            builder.json.tok_chld[key_index] = offset_token as u32;
-            builder.json.tok_term[key_index] = (builder.json.next_index() - 1) as u32;
+            builder.state.push(builder::State::object(0));
+            builder.key(key);
+            builder.tree(&value);
+            builder.json.tok_meta[0] = 0;
 
             builder.json
         }
